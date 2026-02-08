@@ -61,14 +61,14 @@ class GameOverResult:
     total_moves: int
     """Total number of moves made in the game."""
 
-    winning_moves: int
-    """Number of moves made by the winner."""
+    ships_saved: int
+    """Number of ships remaining for the winner."""
 
     def __repr__(self) -> str:
         return (
             f"GameOverResult(winner_id='{self.winner_id}', "
             f"loser_id='{self.loser_id}', total_moves={self.total_moves}, "
-            f"winning_moves={self.winning_moves})"
+            f"ships_saved={self.ships_saved})"
         )
 
     def to_dict(self) -> dict:
@@ -82,5 +82,5 @@ class GameOverResult:
             "winner_id": self.winner_id,
             "loser_id": self.loser_id,
             "total_moves": self.total_moves,
-            "winning_moves": self.winning_moves,
+            "ships_saved": self.ships_saved,
         }

@@ -1,0 +1,7 @@
+# Requisitos del Servidor de Batalla Naval
+# El servidor usa solo la librería estándar de Python
+# No hay dependencias externas requeridas
+
+# Para desarrollo y testing:
+websockets>=10.0  # Solo para example_client.py (testing)
+python-dotenv>=0.19.0  # Para cargar variables de entorno desde .env

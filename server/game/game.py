@@ -306,11 +306,18 @@ class Game:
             if state == CellState.HIT:
                 winning_moves += 1
 
+        ships_saved = len(
+            [
+                ship
+                for ship in winner.get_ships().values()
+                if not ship.is_sunk()
+            ])
+
         return GameOverResult(
             winner_id=self._winner,
             loser_id=loser_id,
             total_moves=self._move_count,
-            winning_moves=winning_moves,
+            ships_saved=ships_saved,
         )
 
     def _get_other_player(self, player_id: str) -> str:

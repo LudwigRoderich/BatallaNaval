@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BATALLA NAVAL</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- PANTALLA DE INICIO -->
+    <section id="screen-start" class="screen active">
+        <div class="radar-bg"></div>
+        <div class="container-start">
+            <div class="title-container">
+                <h1 class="main-title">
+                    <span class="title-line">BATALLA</span>
+                    <span class="title-line">NAVAL</span>
+                </h1>
+                <div class="title-subtitle">SISTEMA DE COMBATE TÁCTICO</div>
+            </div>
+            
+            <div class="start-form">
+                <div class="form-group">
+                    <label for="player-name">IDENTIFICACIÓN DE OPERADOR</label>
+                    <input type="text" id="player-name" placeholder="Ingresa tu nombre" maxlength="20" autocomplete="off">
+                </div>
+                <button id="btn-find-match" class="btn btn-primary">
+                    <span class="btn-text">INICIAR BÚSQUEDA</span>
+                    <span class="btn-icon">▶</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- PANTALLA DE POSICIONAMIENTO -->
+    <section id="screen-placement" class="screen">
+        <div class="screen-header">
+            <h2 class="screen-title">DESPLIEGUE DE FLOTA</h2>
+            <div class="player-info">
+                <span class="label">OPERADOR:</span>
+                <span id="placement-player-name" class="value"></span>
+            </div>
+        </div>
+
+        <div class="placement-container">
+            <div class="placement-left">
+                <div class="board-container">
+                    <div class="board-label">TU TABLERO</div>
+                    <div id="placement-board" class="board"></div>
+                    <div class="board-coordinates">
+                        <div class="coord-row"></div>
+                        <div class="coord-col"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="placement-right">
+                <div class="ships-panel">
+                    <h3 class="panel-title">FLOTA DISPONIBLE</h3>
+                    <div id="ships-list" class="ships-list">
+                        <!-- Ships will be added dynamically -->
+                    </div>
+                </div>
+
+                <div class="placement-controls">
+                    <button id="btn-random-placement" class="btn btn-secondary">
+                        <span>ALEATORIO</span>
+                    </button>
+                    <button id="btn-rotate-ship" class="btn btn-secondary" disabled>
+                        <span>ROTAR</span>
+                    </button>
+                    <button id="btn-confirm-placement" class="btn btn-primary" disabled>
+                        <span>CONFIRMAR DISPOSICIÓN</span>
+                    </button>
+                    <div class="placement-instructions">
+                    <div class="instruction-item">
+                        <span class="instruction-icon">→</span>
+                        <span>Selecciona un barco y haz clic en el tablero</span>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="instruction-icon">⟲</span>
+                        <span>Usa ROTAR para cambiar orientación</span>
+                    </div>
+                </div>
+
+                </div>
+
+                
+            </div>
+        </div>
+    </section>
+
+    <!-- PANTALLA DE JUEGO -->
+    <section id="screen-game" class="screen">
+        <div class="screen-header">
+            <h2 class="screen-title">COMBATE ACTIVO</h2>
+            <div class="game-info">
+                <div class="info-item">
+                    <span class="label">TURNO:</span>
+                    <span id="current-turn" class="value"></span>
+                </div>
+                <div class="info-item">
+                    <span class="label">MOVIMIENTOS:</span>
+                    <span id="move-count" class="value">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="game-container">
+            <div class="board-section">
+                <div class="board-header">
+                    <div class="board-title">TU FLOTA</div>
+                    <div class="board-status">
+                        <span>Barcos restantes: </span>
+                        <span id="your-ships-remaining" class="status-value">5</span>
+                    </div>
+                </div>
+                <div class="board-container">
+                    <div id="defense-board" class="board"></div>
+                    <div class="board-coordinates">
+                        <div class="coord-row"></div>
+                        <div class="coord-col"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="board-section">
+                <div class="board-header">
+                    <div class="board-title">FLOTA ENEMIGA</div>
+                    <div class="board-status">
+                        <span>Barcos restantes: </span>
+                        <span id="enemy-ships-remaining" class="status-value">5</span>
+                    </div>
+                </div>
+                <div class="board-container">
+                    <div id="attack-board" class="board interactive"></div>
+                    <div class="board-coordinates">
+                        <div class="coord-row"></div>
+                        <div class="coord-col"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="game-log">
+                <div class="log-header">REGISTRO DE COMBATE</div>
+                <div id="combat-log" class="log-content"></div>
+            </div>
+        </div>
+
+        
+    </section>
+
+    <!-- PANTALLA DE FIN DE JUEGO -->
+    <section id="screen-gameover" class="screen">
+        <div class="gameover-container">
+            <div class="gameover-status">
+                <h2 id="gameover-title" class="gameover-title">VICTORIA</h2>
+                <div id="gameover-subtitle" class="gameover-subtitle">MISIÓN COMPLETADA</div>
+            </div>
+
+            <div class="gameover-stats">
+                <div class="stat-card">
+                    <div class="stat-label">GANADOR</div>
+                    <div id="winner-name" class="stat-value"></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">MOVIMIENTOS TOTALES</div>
+                    <div id="total-moves" class="stat-value">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">PRECISIÓN</div>
+                    <div id="accuracy" class="stat-value">0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">DURACIÓN</div>
+                    <div id="game-duration" class="stat-value">--:--</div>
+                </div>
+            </div>
+
+            <div class="gameover-actions">
+                <button id="btn-play-again" class="btn btn-primary">
+                    <span>NUEVA BATALLA</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <script src="js/state.js"></script>
+    <script src="js/render.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

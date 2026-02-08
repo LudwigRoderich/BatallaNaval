@@ -5,7 +5,7 @@ Board class for the Battleship game.
 
 from typing import Dict, Optional
 from .ship import Ship, Coordinate
-from .enums import CellState
+from .enums import CellState, ShipOrientation
 from .errors import InvalidCoordinateError, ShipPlacementError, ShipOverlapError
 
 
@@ -116,6 +116,19 @@ class Board:
             if self._cells[coord] == CellState.SHIP:
                 raise ShipOverlapError(
                     f"Cannot place ship '{ship.ship_id}': overlap at {coord}."
+                )
+            
+        # Validate ship coordinates based on its type (for its lenght) and orientation
+        if not self.are_coordinates_valid_for_ship(ship):
+            raise ShipPlacementError(
+                f"Ship '{ship.ship_id}' has invalid coordinates for its type {ship.ship_type.name}."
+            )
+
+        # Check if that type of ship is already placed (only one per type allowed)
+        for existing_ship in self._ships.values():
+            if existing_ship.ship_type == ship.ship_type:
+                raise ShipPlacementError(
+                    f"Ship of type '{ship.ship_type.name}' is already placed on the board."
                 )
 
         # Place the ship
@@ -230,6 +243,30 @@ class Board:
             A set of all coordinates that have been attacked.
         """
         return self._attacked_coords.copy()
+    
+    def are_coordinates_valid_for_ship(self, ship: Ship) -> bool:
+        """
+        Check if the ship's coordinates are valid (in a straight line and match ship length).
+
+        Args:
+            ship: The ship to validate.
+        Returns:
+            True if the coordinates are valid for the ship type, False otherwise.
+        """
+        coords = sorted(ship.positions, key=lambda c: (c.x, c.y))
+        if len(coords) != ship.ship_type.length:
+            return False
+        
+        if ship._orientation == ShipOrientation.HORIZONTAL:
+            # Verify that all y coordinates are the same and x coordinates are consecutive
+            return all(coord.y == coords[0].y for coord in coords) and \
+                   all(coords[i].x == coords[0].x + i for i in range(len(coords)))
+        elif ship._orientation == ShipOrientation.VERTICAL:
+            # Verify that all x coordinates are the same and y coordinates are consecutive
+            return all(coord.x == coords[0].x for coord in coords) and \
+                   all(coords[i].y == coords[0].y + i for i in range(len(coords)))
+        else:
+            return False
 
     def __repr__(self) -> str:
         return f"Board(size={self._size}, ships={len(self._ships)}, attacks={len(self._attacked_coords)})"

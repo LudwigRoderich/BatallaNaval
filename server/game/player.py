@@ -7,7 +7,8 @@ from typing import Optional, Dict
 from .ship import Ship, Coordinate
 from .board import Board
 from .enums import AttackOutcome
-from .errors import PlayerError, InvalidCoordinateError
+from .errors import PlayerError, InvalidCoordinateError, ShipPlacementError, ShipOverlapError
+from .ship import ShipType
 
 
 class Player:
@@ -21,7 +22,7 @@ class Player:
             player_id: Unique identifier for the player.
             board_size: The size of the player's board (default 10x10).
         """
-        self._player_id = player_id
+        self._player_id = player_id.strip().lower().replace(" ", "_")
         self._board = Board(board_size)
         self._tracking_board = Board(board_size)  # To track opponent's board state
 
@@ -52,8 +53,9 @@ class Player:
         """
         try:
             self._board.place_ship(ship)
-        except Exception as e:
-            raise PlayerError(f"Cannot place ship '{ship.ship_id}': {str(e)}")
+        except ShipOverlapError as e:
+            raise PlayerError("Invalid ship placement") from e
+
 
     def receive_attack(self, coord: Coordinate) -> AttackOutcome:
         """
@@ -157,6 +159,18 @@ class Player:
             A dictionary of ship_id to Ship objects.
         """
         return self._board.ships
+    
+    def all_ships_placed(self) -> bool:
+        """
+        Check if all required ships have been placed on the board.
+
+        Returns:
+            True if all required ships are placed.
+        """
+        required_ship_types = {ship_type for ship_type in ShipType}
+        placed_ship_types = {ship.ship_type for ship in self._board.ships.values()}
+
+        return required_ship_types == placed_ship_types
 
     def __repr__(self) -> str:
         ships_count = len(self._board.ships)

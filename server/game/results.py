@@ -66,8 +66,9 @@ class GameOverResult:
 
     def __repr__(self) -> str:
         return (
-            f"GameOverResult(winner='{self.winner_id}', "
-            f"total_moves={self.total_moves})"
+            f"GameOverResult(winner_id='{self.winner_id}', "
+            f"loser_id='{self.loser_id}', total_moves={self.total_moves}, "
+            f"winning_moves={self.winning_moves})"
         )
 
     def to_dict(self) -> dict:

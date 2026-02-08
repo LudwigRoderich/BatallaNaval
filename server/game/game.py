@@ -8,7 +8,7 @@ from .player import Player
 from .board import Board
 from .enums import GameState, AttackOutcome
 from .results import AttackResult, GameOverResult
-from .errors import GameStateError, PlayerError, InvalidCoordinateError
+from .errors import GameStateError, PlayerError, InvalidCoordinateError, GameError
 
 
 class Game:
@@ -76,6 +76,7 @@ class Game:
             raise PlayerError("Game already has 2 players.")
 
         self._players[player_id] = Player(player_id, self._board_size)
+        print(f"Player '{player_id}' added to the game.")
 
     def place_ship(self, player_id: str, ship: Ship) -> None:
         """
@@ -99,8 +100,12 @@ class Game:
 
         try:
             self._players[player_id].place_ship(ship)
-        except Exception as e:
-            raise PlayerError(f"Cannot place ship for player '{player_id}': {str(e)}")
+            print(f"Player '{player_id}' placed ship '{ship.ship_id}'.")
+        except PlayerError as e:
+            raise GameError(
+                f"Player '{player_id}' failed to place ship '{ship.ship_id}'"
+            ) from e
+
 
     def start(self) -> None:
         """
@@ -119,7 +124,11 @@ class Game:
                 f"Cannot start game: expected 2 players, got {len(self._players)}."
             )
 
-        self._state = GameState.PLACING_SHIPS
+        if len(self.players) == 2: self._state = GameState.PLACING_SHIPS
+        #self._current_turn = self._players.keys().__iter__().__next__()
+        print("Game started. Players can now place their ships.")
+        #print(f"Current turn: {self._current_turn}")
+        #self._state = GameState.PLACING_SHIPS
 
     def finish_ship_placement(self) -> None:
         """
@@ -131,6 +140,11 @@ class Game:
         if self._state != GameState.PLACING_SHIPS:
             raise GameStateError(
                 f"Cannot finish ship placement: game is in {self._state.name} state."
+            )
+        
+        if not self.all_ships_placed():
+            raise GameStateError(
+                "Cannot finish ship placement: not all players have placed all their ships."
             )
 
         # Start the game
@@ -320,6 +334,18 @@ class Game:
                 return pid
 
         raise PlayerError("Game does not have two players.")
+    
+    def all_ships_placed(self) -> bool:
+        """
+        Check if all players have placed all their ships.
+
+        Returns:
+            True if all players have placed all their ships.
+        """
+        for player in self._players.values():
+            if not player.all_ships_placed():
+                return False
+        return True
 
     def _switch_turn(self) -> None:
         """Switch the current turn to the other player."""

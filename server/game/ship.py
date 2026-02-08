@@ -5,7 +5,7 @@ Ship class for the Battleship game.
 
 from dataclasses import dataclass
 from typing import Set
-from .enums import ShipType
+from .enums import ShipType, ShipOrientation
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,8 @@ class Ship:
         self,
         ship_id: str,
         ship_type: ShipType,
-        positions: Set[Coordinate]
+        positions: Set[Coordinate],
+        orientation: ShipOrientation
     ) -> None:
         """
         Initialize a ship.
@@ -56,6 +57,7 @@ class Ship:
         self._ship_type = ship_type
         self._positions = frozenset(positions)
         self._hits: Set[Coordinate] = set()
+        self._orientation = orientation
 
     @property
     def ship_id(self) -> str:
@@ -134,6 +136,7 @@ class Ship:
             Number of unhit positions.
         """
         return len(self._positions) - len(self._hits)
+    
 
     def __repr__(self) -> str:
         return (

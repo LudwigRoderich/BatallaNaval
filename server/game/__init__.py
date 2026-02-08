@@ -13,7 +13,7 @@ from .enums import (
     AttackOutcome,
     GameState,
     ShipType,
-    BoardOrientation,
+    ShipOrientation,
 )
 from .results import AttackResult, GameOverResult
 from .errors import (
@@ -39,7 +39,7 @@ __all__ = [
     "AttackOutcome",
     "GameState",
     "ShipType",
-    "BoardOrientation",
+    "ShipOrientation",
     # Results
     "AttackResult",
     "GameOverResult",

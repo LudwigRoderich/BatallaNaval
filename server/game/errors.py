@@ -41,3 +41,7 @@ class PlayerError(BattleshipGameError):
 class InvalidAttackError(BattleshipGameError):
     """Raised when an attack cannot be executed."""
     pass
+
+class GameError(BattleshipGameError):
+    """Raised for general game errors."""
+    pass

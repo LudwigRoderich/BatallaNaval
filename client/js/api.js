@@ -3,8 +3,16 @@
  * WebSocket para Batalla Naval
  */
 
+console.log('[API] Módulo API cargado');
 const API = {
-    wsURL: 'ws://localhost:8080',
+    get wsURL() {
+        // Usar el hostname actual del navegador
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.hostname;
+        const port = 8080; // Puerto fijo del WebSocket
+        
+        return `${protocol}//${host}:${port}`;
+    },
     ws: null,
     messageHandlers: {},
     reconnectAttempts: 0,
@@ -15,6 +23,7 @@ const API = {
      * Inicializa la conexión WebSocket
      */
     init() {
+        console.log('[API] Inicializando conexión WebSocket...');
         return new Promise((resolve, reject) => {
             try {
                 this.ws = new WebSocket(this.wsURL);
@@ -49,12 +58,19 @@ const API = {
      * Intenta reconectar al servidor
      */
     _attemptReconnect() {
+        // Disparar evento de desconexión
+        const event = new CustomEvent('websocket-disconnected');
+        document.dispatchEvent(event);
+        
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`[API] Intentando reconectar (intento ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+            console.log(`[API] Intentando reconectar (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
             
             setTimeout(() => {
-                this.init().catch(() => {
+                this.init().then(() => {
+                    const event = new CustomEvent('websocket-reconnected');
+                    document.dispatchEvent(event);
+                }).catch(() => {
                     this._attemptReconnect();
                 });
             }, this.reconnectDelay);

@@ -12,6 +12,8 @@ const GameState = {
     // Estado actual
     currentScreen: 'start',
     playerName: '',
+    playerId: null,
+    matchId: null,
     boardSize: 10,
     
     // Estado de posicionamiento
@@ -20,11 +22,11 @@ const GameState = {
         orientation: 'horizontal',
         placedShips: [],
         ships: [
-            { id: 'carrier', name: 'Portaaviones', type: 'AIRCRAFT_CARRIER', length: 5, placed: false },
-            { id: 'battleship', name: 'Acorazado', type: 'BATTLESHIP', length: 4, placed: false },
-            { id: 'cruiser', name: 'Crucero', type: 'CRUISER', length: 3, placed: false },
-            { id: 'destroyer', name: 'Destructor', type: 'DESTROYER', length: 3, placed: false },
-            { id: 'submarine', name: 'Submarino', type: 'SUBMARINE', length: 2, placed: false }
+            { id: 'carrier', name: 'Portaaviones', type: 'AIRCRAFT_CARRIER', length: 5, placed: false, orientation: 'horizontal'},
+            { id: 'battleship', name: 'Acorazado', type: 'BATTLESHIP', length: 4, placed: false, orientation: 'horizontal' },
+            { id: 'cruiser', name: 'Crucero', type: 'CRUISER', length: 3, placed: false, orientation: 'horizontal' },
+            { id: 'destroyer', name: 'Destructor', type: 'DESTROYER', length: 3, placed: false, orientation: 'horizontal' },
+            { id: 'submarine', name: 'Submarino', type: 'SUBMARINE', length: 2, placed: false, orientation: 'horizontal' }
         ]
     },
     
@@ -43,6 +45,44 @@ const GameState = {
     gameTimer: {
         startTime: null,
         endTime: null
+    },
+    
+    /**
+     * Inicializa el estado del juego
+     * Se ejecuta una sola vez al cargar la aplicación
+     */
+    init() {
+        console.log('[GameState] Inicializando estado...');
+        
+        // Resetear pantalla
+        this.currentScreen = this.SCREEN_START;
+        
+        // Limpiar datos de jugador
+        this.playerName = '';
+        this.playerId = null;
+        this.matchId = null;
+        
+        // Resetear posicionamiento
+        this.resetPlacement();
+        
+        // Reiniciar juego
+        this.game = {
+            currentTurn: '',
+            moveCount: 0,
+            yourShipsRemaining: 5,
+            enemyShipsRemaining: 5,
+            defenseBoard: [],
+            attackBoard: [],
+            combatLog: []
+        };
+        
+        // Reiniciar temporizador
+        this.gameTimer = {
+            startTime: null,
+            endTime: null
+        };
+        
+        console.log('[GameState] ✓ Estado inicializado correctamente');
     },
     
     /**
@@ -111,8 +151,10 @@ const GameState = {
             ship.placed = true;
             this.placement.placedShips.push({
                 ...ship,
-                positions: positions
+                positions: positions,
+                orientation: this.placement.orientation
             });
+
         }
     },
     
@@ -202,25 +244,12 @@ const GameState = {
     },
     
     /**
-     * Reinicia todo el estado del juego
+     * Reinicia todo el estado del juego (al volver a inicio)
      */
     reset() {
-        this.playerName = '';
-        this.currentScreen = 'start';
-        this.resetPlacement();
-        this.game = {
-            currentTurn: '',
-            moveCount: 0,
-            yourShipsRemaining: 5,
-            enemyShipsRemaining: 5,
-            defenseBoard: [],
-            attackBoard: [],
-            combatLog: []
-        };
-        this.gameTimer = {
-            startTime: null,
-            endTime: null
-        };
+        console.log('[GameState] Reseteando estado...');
+        this.init();
+        console.log('[GameState] ✓ Estado reseteado');
     }
 };
 

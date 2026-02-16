@@ -32,7 +32,7 @@ def main():
         # Crear y iniciar servidor
         server = BatallaNavalServer(host=SERVER_HOST, port=SERVER_PORT)
         
-        logger.info(f"Iniciando servidor en {SERVER_HOST}:{SERVER_PORT}...")
+        logger.info(f"Iniciando servidor en http://{SERVER_HOST}:{SERVER_PORT}...")
         server.start()
         
     except KeyboardInterrupt:

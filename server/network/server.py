@@ -16,11 +16,12 @@ from game.game import Game
 from game.ship import Ship, ShipOrientation, Coordinate
 from game.enums import GameState, AttackOutcome
 from network.protocol import Protocol
+from game.enums import ShipType, GameState
 
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='[%(asctime)s] - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,14 @@ class GameSession:
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
         self.timeout = timedelta(minutes=30)
+        self.game_state = GameState.WAITING_FOR_PLAYERS
 
     def add_player(self, player_id: str, player_name: str, client_socket: socket.socket) -> bool:
         """Añade un jugador a la sesión."""
+        if self.game_state != GameState.WAITING_FOR_PLAYERS:
+            print(f"Intento de unirse a partida {self.game_id} que no está esperando jugadores")
+            return False
+
         if len(self.players) >= 2:
             return False
 
@@ -46,6 +52,9 @@ class GameSession:
             'socket': client_socket,
             'ready': False,
         }
+        if len(self.players) == 2:
+            self.game_state = GameState.PLACING_SHIPS
+            print("Partida con dos jugadores listos, pasando al modo colocación de barcos")
         return True
 
     def get_opponent_id(self, player_id: str) -> Optional[str]:
@@ -63,7 +72,7 @@ class GameSession:
 class BatallaNavalServer:
     """Servidor principal de Batalla Naval."""
 
-    def __init__(self, host: str = '0.0.0.0', port: int = 8080):
+    def __init__(self, host: str = '127.0.0.1', port: int = 8080):
         self.host = host
         self.port = port
         self.protocol = Protocol()
@@ -83,22 +92,23 @@ class BatallaNavalServer:
         self.client_threads = {}
 
     def start(self):
-        """Inicia el servidor."""
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(5)
-            self.running = True
             
+            # --- SOLUCIÓN: Timeout de 1 segundo ---
+            self.server_socket.settimeout(10.0) 
+            
+            self.running = True
             logger.info(f"Servidor iniciado en {self.host}:{self.port}")
             
             while self.running:
                 try:
                     client_socket, client_address = self.server_socket.accept()
-                    logger.info(f"Conexión aceptada desde {client_address}")
+                    logger.info(f"Conexión solicitada desde {client_address}")
                     
-                    # Manejar conexión en un hilo separado
                     thread = threading.Thread(
                         target=self._handle_client,
                         args=(client_socket, client_address),
@@ -106,10 +116,16 @@ class BatallaNavalServer:
                     )
                     thread.start()
                     
+                except socket.timeout:
+                    # Esto ocurre cada 1 segundo, permitiendo verificar self.running
+                    # y capturar el Ctrl+C
+                    continue
                 except Exception as e:
                     if self.running:
                         logger.error(f"Error aceptando conexión: {e}")
                         
+        except KeyboardInterrupt:
+            logger.info("Interrupción detectada (Ctrl+C)")
         except Exception as e:
             logger.error(f"Error iniciando servidor: {e}")
         finally:
@@ -117,9 +133,14 @@ class BatallaNavalServer:
 
     def stop(self):
         """Detiene el servidor."""
+        if not self.running:
+            return
         self.running = False
         if self.server_socket:
-            self.server_socket.close()
+            try:
+                self.server_socket.close()
+            except Exception as e:
+                logger.error(f"Error al cerrar socket: {e}")
         logger.info("Servidor detenido")
 
     def _handle_client(self, client_socket: socket.socket, client_address: Tuple):
@@ -130,7 +151,7 @@ class BatallaNavalServer:
             # WebSocket handshake
             request = client_socket.recv(4096).decode('utf-8')
             if not self._websocket_handshake(client_socket, request):
-                logger.warning(f"Handshake fallido desde {client_address}")
+                logger.warning(f"Handshake fallido desde el pelotudo de {client_address}")
                 client_socket.close()
                 return
 
@@ -295,8 +316,8 @@ class BatallaNavalServer:
             self._send_error(client_socket, 402, error_msg)
             return None
 
-        player_id = data.get('playerId')
-        player_name = data.get('playerName')
+        player_id = data.get('playerId', f"player_{self.next_player_id}")
+        player_name = data.get('playerName', f"Jugador {self.next_player_id}")
 
         # Verificar si el jugador ya está en una partida
         if player_id in self.player_sessions:
@@ -306,7 +327,7 @@ class BatallaNavalServer:
         # Buscar una partida esperando oponente
         available_session = None
         for session in self.sessions.values():
-            if session.game.state == GameState.WAITING_FOR_PLAYERS and len(session.players) == 1:
+            if session.game_state == GameState.WAITING_FOR_PLAYERS and len(session.players) == 1:
                 available_session = session
                 break
 
@@ -365,15 +386,14 @@ class BatallaNavalServer:
             self._send_error(client_socket, 402, error_msg)
             return None
 
-        game_id = data.get('gameId')
-        player_id = data.get('playerId')
-
-        if game_id not in self.sessions:
+        game_id = data.get('gameId') or None
+        player_id = data.get('playerId') or None
+        if not game_id or game_id not in self.sessions:
             self._send_error(client_socket, 420, "Partida no encontrada")
             return None
 
         session = self.sessions[game_id]
-        if player_id not in session.players:
+        if not player_id or player_id not in session.players:
             self._send_error(client_socket, 410, "Jugador no encontrado en esa partida")
             return None
 
@@ -411,64 +431,129 @@ class BatallaNavalServer:
             self._send_error(client_socket, 402, error_msg)
             return
 
-        game_id = data.get('gameId')
-        ships_data = data.get('ships')
+        game_id = data.get('gameId') or None
+        ships_data = data.get('ships') or None
 
-        if game_id not in self.sessions:
+        if not game_id or game_id not in self.sessions:
             self._send_error(client_socket, 420, "Partida no encontrada")
+            return
+        
+        if not ships_data:
+            self._send_error(client_socket, 402, "Datos de barcos inválidos")
+            return
+        
+        if len(ships_data) == 0:
+            self._send_error(client_socket, 402, "No se proporcionaron barcos")
             return
 
         session = self.sessions[game_id]
         game = session.game
 
         try:
-            # Convertir datos de barcos y colocarlos
-            for ship_data in ships_data:
-                start = ship_data['start']
-                orientation = ShipOrientation.HORIZONTAL if ship_data['orientation'] == 'horizontal' else ShipOrientation.VERTICAL
-                ship_type = ship_data['type']
-                
-                ship = Ship(ship_type, orientation)
-                ship.start_coordinate = Coordinate(start['x'], start['y'])
-                
-                game.place_ship(player_id, ship)
+            # Conversión y validación de datos de barcos
 
-            # Marcar al jugador como listo
+            board_size = getattr(game, 'board_size', getattr(game, 'size', None))
+
+            for idx, ship_data in enumerate(ships_data):
+            # Validar estructura mínima
+                if not all(k in ship_data for k in ('start', 'orientation', 'type')):
+                    raise ValueError("Cada barco debe tener 'start', 'orientation' y 'type'")
+
+                start = ship_data['start']
+                sx, sy = int(start['x']), int(start['y'])
+
+                orient_str = str(ship_data['orientation']).lower()
+                if orient_str not in ('horizontal', 'vertical'):
+                    raise ValueError(f"Orientación inválida: {ship_data['orientation']}")
+                orientation = ShipOrientation.HORIZONTAL if orient_str == 'horizontal' else ShipOrientation.VERTICAL
+
+                # Obtener ShipType a partir del dato (soportando tanto nombre como instancia)
+                raw_type = ship_data['type']
+                if isinstance(raw_type, ShipType):
+                    ship_type = raw_type
+                else:
+                    try:
+                    # Intentar coincidencia directa (se espera algo como "DESTROYER" o "destroyer")
+                        ship_type = ShipType[str(raw_type).upper()]
+                    except Exception:
+                        raise ValueError(f"Tipo de barco inválido: {raw_type}")
+
+            length = ship_type.length
+
+            # Construir el conjunto de posiciones del barco
+            positions = set()
+            if orientation == ShipOrientation.HORIZONTAL:
+                positions = {Coordinate(sx + i, sy) for i in range(length)}
+            else:
+                positions = {Coordinate(sx, sy + i) for i in range(length)}
+
+            # Validar que las posiciones estén dentro del tablero (si se conoce tamaño)
+            if board_size is not None:
+                for c in positions:
+                    if c.x < 0 or c.y < 0 or c.x >= board_size or c.y >= board_size:
+                        raise ValueError(f"Barco {ship_type.name} fuera de los límites en {c}")
+
+            ship_id = ship_data.get('id', f"{player_id}_{ship_type.name}_{idx}")
+            ship = Ship(ship_id, ship_type, positions, orientation)
+
+            # Delegar la lógica de colocación al objeto Game (puede validar solapamientos, etc.)
+            game.place_ship(player_id, ship)
+
+            # Marcar al jugador como listo y actualizar actividad
             session.players[player_id]['ready'] = True
-            
-            # Enviar confirmación
+            session.last_activity = datetime.now()
+
+            # Confirmación al jugador
             self._send_message(
-                client_socket,
-                'game_state',
-                code=200,
-                gameId=game_id,
-                message="Barcos colocados correctamente"
+            client_socket,
+            'game_state',
+            code=200,
+            gameId=game_id,
+            message="Barcos colocados correctamente"
             )
-            
-            # Verificar si ambos jugadores están listos
-            all_ready = all(p['ready'] for p in session.players.values())
+
+            # Si ambos jugadores están listos, iniciar la partida
+            all_ready = all(p['ready'] for p in session.players.values()) and len(session.players) >= 2
             if all_ready:
-                # Actualizar estado del juego
-                game._state = GameState.IN_PROGRESS
-                player_ids = list(session.players.keys())
-                game._current_turn = player_ids[0]
-                
-                logger.info(f"Partida {game_id} iniciada")
-                
-                # Notificar a ambos jugadores
-                for pid, player_info in session.players.items():
-                    is_turn = (pid == game._current_turn)
-                    self._send_message(
-                        player_info['socket'],
-                        'game_state',
-                        code=212,
-                        gameId=game_id,
-                        playerId=pid,
-                        message="¡Partida iniciada!" if is_turn else "Tu oponente va primero",
-                        gameState="IN_PROGRESS",
-                        yourTurn=is_turn
-                    )
-                    
+                # Intentar usar API pública del juego para iniciar; si no existe, caer en la asignación directa
+                try:
+                    if hasattr(game, 'start') and callable(getattr(game, 'start')):
+                      game.start()
+                    else:
+                        game._state = GameState.IN_PROGRESS
+                except Exception:
+                    # Si start falla, asegurar estado mínimo
+                    game._state = GameState.IN_PROGRESS
+
+            # Determinar primer turno (orden en session.players)
+            player_ids = list(session.players.keys())
+            first_player = player_ids[0] if player_ids else None
+            try:
+                if first_player:
+                    if hasattr(game, 'set_current_turn') and callable(getattr(game, 'set_current_turn')):
+                        game.set_current_turn(first_player)
+                else:
+                    game._current_turn = first_player
+            except Exception:
+                # No crítico; continuar con lo que tengamos
+                pass
+
+            logger.info(f"Partida {game_id} iniciada")
+
+            # Notificar a ambos jugadores del inicio
+            for pid, player_info in session.players.items():
+                is_turn = (pid == getattr(game, 'current_turn', getattr(game, '_current_turn', first_player)))
+                self._send_message(
+                player_info['socket'],
+                'game_state',
+                code=212,
+                gameId=game_id,
+                playerId=pid,
+                message="¡Partida iniciada!" if is_turn else "Tu oponente va primero",
+                gameState="IN_PROGRESS",
+                yourTurn=is_turn
+                )
+
         except Exception as e:
             logger.error(f"Error colocando barcos: {e}")
             self._send_error(client_socket, 430, str(e))
@@ -484,8 +569,14 @@ class BatallaNavalServer:
             self._send_error(client_socket, 402, error_msg)
             return
 
-        game_id = data.get('gameId')
-        coord_data = data.get('coordinate')
+        game_id = data.get('gameId') or None
+        coord_data = data.get('coordinate') or None
+        if not game_id or game_id not in self.sessions:
+            self._send_error(client_socket, 420, "Partida no encontrada")
+            return
+        if not coord_data:
+            self._send_error(client_socket, 402, "Coordenada de ataque inválida")
+            return
         coordinate = Coordinate(coord_data['x'], coord_data['y'])
 
         if game_id not in self.sessions:

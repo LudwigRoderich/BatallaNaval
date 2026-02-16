@@ -12,7 +12,7 @@ async def test_game_flow():
     """Simula un flujo de juego completo."""
     
     # Conectar dos clientes
-    uri = "ws://localhost:8080"
+    uri = "ws://127.0.0.1:8080"
     
     print("=== INICIANDO TEST DE FLUJO DE JUEGO ===\n")
     

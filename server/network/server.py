@@ -35,29 +35,25 @@ import json
 import base64
 import hashlib
 import logging
-import os
-import uvicorn
 import uuid
 from typing import Dict, Optional, Tuple, List
 from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 
 from game.game import Game
 from game.ship import Ship, ShipOrientation, Coordinate
-from game.enums import GameState, AttackOutcome, ShipType
+from game.enums import GameState, ShipType
 from network.protocol import Protocol
 from config import ServerConfig
 
-# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(asctime)s] - %(levelname)s - %(message)s'
+    format='%(asctime)s | %(levelname)-8s | %(name)s | %(filename)s:%(lineno)d | %(message)s',
+    datefmt='%H:%M:%S',
+    force=True
 )
-logger = logging.getLogger(__name__)
+
+
 
 @dataclass
 class OutgoingMessage:
@@ -71,6 +67,8 @@ class OutgoingMessage:
 # ============================================================
 
 class GameSession:
+
+    
     """
     Representa una sesión de juego independiente desde su creación hasta su fin.
     
@@ -86,7 +84,9 @@ class GameSession:
         Args:
             session_id: ID único de esta sesión de juego.
             board_size: Tamaño del tablero para ambos jugadores (defecto: 10x10).
+            
         """
+        self.logger = logging.getLogger("GameSession")
         self.session_id = session_id
         self.game = Game(board_size)
         self.players: Dict[str, dict] = {}  # {player_id: {'socket': socket, 'name': str, 'connected': bool}}
@@ -105,7 +105,7 @@ class GameSession:
         self.last_activity_at: datetime = datetime.now()
         self.is_active = True
         
-        logger.info(f"[SESSION {self.session_id}] Sesión créada (reconexión timeout: {ServerConfig().TIMEOUT_RECONNECTION}s)")
+        self.logger.info(f"[SESSION {self.session_id}] Sesión créada (reconexión timeout: {ServerConfig().TIMEOUT_RECONNECTION}s)")
 
     # ============================================================
     # MANEJO DE JUGADORES
@@ -128,7 +128,7 @@ class GameSession:
             éxito es False si la sesión está llena o hay error.
         """
         if len(self.players) >= 2:
-            logger.warning(f"[SESSION {self.session_id}] Intento de añadir jugador pero sesión está llena")
+            self.logger.warning(f"[SESSION {self.session_id}] Intento de añadir jugador pero sesión está llena")
             return False, []
 
         try:
@@ -138,7 +138,7 @@ class GameSession:
                 'name': player_name,
                 'connected': True
             }
-            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} ({player_name}) añadido")
+            self.logger.info(f"[SESSION {self.session_id}] Jugador {player_id[:8]} ({player_name}) añadido")
             
             messages: List[OutgoingMessage] = []
             
@@ -183,7 +183,7 @@ class GameSession:
             return True, messages
             
         except Exception as e:
-            logger.error(f"[SESSION {self.session_id}] Error al añadir jugador: {e}")
+            self.logger.error(f"[SESSION {self.session_id}] Error al añadir jugador: {e}")
             return False, []
 
     def place_ships(self, player_id: str, ships_data: list) -> Tuple[bool, List[OutgoingMessage]]:
@@ -233,26 +233,24 @@ class GameSession:
                 
                 # Colocar barcos en el juego
                 for ship in ships:
-                    print(f"Placing ship {ship.ship_type.name} at positions: {ship.positions} with orientation {ship._orientation.name}")
                     self.game.place_ship(player_id, ship)
+
+                self.logger.info(f"[SESSION {self.session_id}] Jugador {player_id[:8]} colocó sus barcos")
                 
-                logger.info(f"[SESSION {self.session_id}] Jugador {player_id} colocó {len(ships)} barcos")
-                logger.info(f"[SESSION {self.session_id}] Jugadores en sesión: {list(self.players.keys())}")
                 
                 messages: List[OutgoingMessage] = []
                 
                 # Verificar si ambos jugadores colocaron barcos
                 all_placed = self.game.all_ships_placed()
-                logger.info(f"[SESSION {self.session_id}] all_ships_placed() = {all_placed}")
                 
                 if all_placed:
                     # Iniciar juego
                     self.game.finish_ship_placement()
                     self.started_at = datetime.now()
-                    logger.info(f"[SESSION {self.session_id}] Ambos jugadores listos, juego iniciado")
+                    self.logger.info(f"[SESSION {self.session_id}] Ambos jugadores listos, juego iniciado")
                     
                     current_turn = self.game.current_turn
-                    logger.info(f"[SESSION {self.session_id}] Juego iniciado. Turno inicial: {current_turn}")
+                    self.logger.info(f"[SESSION {self.session_id}] Juego iniciado. Turno inicial: {current_turn}")
                     
                     # === PASO 1: Enviar game_state 212 (GAME_STARTED) a ambos ===
                     for pid in self.players:
@@ -275,7 +273,7 @@ class GameSession:
                             }
                         )
                         messages.append(msg)
-                        logger.info(f"[SESSION {self.session_id}] Mensaje 212 (GAME_STARTED) enviado a {pid}")
+                        self.logger.info(f"[SESSION {self.session_id}] Mensaje 212 (GAME_STARTED) enviado a {pid}")
                     
                     # === PASO 2: Enviar game_state 215/216 para asignar turno inicial ===
                     for pid in self.players:
@@ -303,7 +301,7 @@ class GameSession:
                             }
                         )
                         messages.append(msg)
-                        logger.info(f"[SESSION {self.session_id}] Mensaje {code} enviado a {pid}")
+                        self.logger.info(f"[SESSION {self.session_id}] Mensaje {code} enviado a {pid}")
                 else:
                     # Solo un jugador colocó, esperar al otro
                     other_player_id = self._get_other_player(player_id)
@@ -322,14 +320,14 @@ class GameSession:
                             }
                         )
                         messages.append(msg)
-                        logger.info(f"[SESSION {self.session_id}] {player_id} colocó barcos, esperando a {other_player_id}")
+                        self.logger.info(f"[SESSION {self.session_id}] {player_id[:8]} colocó barcos, esperando a {other_player_id}")
                 
                 return True, messages
                 
             except Exception as e:
-                logger.error(f"[SESSION {self.session_id}] Error al colocar barcos: {e}")
+                self.logger.error(f"[SESSION {self.session_id}] Error al colocar barcos: {e}")
                 import traceback
-                logger.error(traceback.format_exc())
+                self.logger.error(traceback.format_exc())
                 return False, []
 
     # ============================================================
@@ -360,7 +358,7 @@ class GameSession:
             result = self.game.attack(attacker_id, coord)
             
             defender_id = result.defender_id
-            logger.info(
+            self.logger.info(
                 f"[SESSION {self.session_id}] Ataque de {attacker_id} a ({coord.x}, {coord.y}): {result.outcome.name}"
             )
             
@@ -386,7 +384,7 @@ class GameSession:
                 }
             )
             messages.append(attack_result_msg)
-            logger.debug(f"[SESSION {self.session_id}] attack_result enviado a {attacker_id}")
+            self.logger.debug(f"[SESSION {self.session_id}] attack_result enviado a {attacker_id}")
             
             # =====================================================================
             # MENSAJE 2: opponent_attack al DEFENSOR
@@ -410,7 +408,7 @@ class GameSession:
                     }
                 )
                 messages.append(opponent_attack_msg)
-                logger.debug(f"[SESSION {self.session_id}] opponent_attack enviado a {defender_id}")
+                self.logger.debug(f"[SESSION {self.session_id}] opponent_attack enviado a {defender_id}")
             
             # =====================================================================
             # MENSAJE 3: game_state 220 (GAME_OVER) o 215/216 (TURN_CHANGE)
@@ -419,7 +417,7 @@ class GameSession:
                 # Juego terminado - enviar code 220 a ambos
                 winner_id = self.game.winner
                 self.finished_at = datetime.now()
-                logger.info(f"[SESSION {self.session_id}] ¡Juego terminado! Ganador: {winner_id}")
+                self.logger.info(f"[SESSION {self.session_id}] ¡Juego terminado! Ganador: {winner_id}")
                 
                 for pid in self.players:
                     other_id = self._get_other_player(pid)
@@ -442,11 +440,11 @@ class GameSession:
                         }
                     )
                     messages.append(game_over_msg)
-                    logger.debug(f"[SESSION {self.session_id}] game_state 220 enviado a {pid}")
+                    self.logger.debug(f"[SESSION {self.session_id}] game_state 220 enviado a {pid}")
             else:
                 # Cambiar turno - enviar code 215/216 a ambos
                 current_turn = self.game.current_turn
-                logger.debug(f"[SESSION {self.session_id}] Turno cambiado a: {current_turn}")
+                self.logger.debug(f"[SESSION {self.session_id}] Turno cambiado a: {current_turn}")
                 
                 for pid in self.players:
                     other_id = self._get_other_player(pid)
@@ -470,14 +468,14 @@ class GameSession:
                         }
                     )
                     messages.append(turn_msg)
-                    logger.debug(f"[SESSION {self.session_id}] game_state {code} enviado a {pid}")
+                    self.logger.debug(f"[SESSION {self.session_id}] game_state {code} enviado a {pid}")
             
             return True, messages
             
         except Exception as e:
-            logger.error(f"[SESSION {self.session_id}] Error en ataque: {e}")
+            self.logger.error(f"[SESSION {self.session_id}] Error en ataque: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            self.logger.error(traceback.format_exc())
             return False, [OutgoingMessage(attacker_id, {
                 'type': 'error',
                 'code': 440,
@@ -508,7 +506,7 @@ class GameSession:
             self.game._winner = winner_id
             self.finished_at = datetime.now()
             
-            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} se rindió")
+            self.logger.info(f"[SESSION {self.session_id}] Jugador {player_id[:8]} se rindió")
             
             messages: List[OutgoingMessage] = []
             
@@ -532,7 +530,7 @@ class GameSession:
             return True, messages
             
         except Exception as e:
-            logger.error(f"[SESSION {self.session_id}] Error en rendición: {e}")
+            self.logger.error(f"[SESSION {self.session_id}] Error en rendición: {e}")
             return False, []
 
     # ============================================================
@@ -563,7 +561,7 @@ class GameSession:
             self.disconnected_player = None
             self.reconnect_timeout = None
             
-            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} reconectado")
+            self.logger.info(f"[SESSION {self.session_id}] Jugador {player_id[:8]} reconectado")
             
             messages: List[OutgoingMessage] = []
             
@@ -602,7 +600,7 @@ class GameSession:
             return True, messages
             
         except Exception as e:
-            logger.error(f"[SESSION {self.session_id}] Error en reconexión: {e}")
+            self.logger.error(f"[SESSION {self.session_id}] Error en reconexión: {e}")
             return False, []
 
     def mark_player_disconnected(self, player_id: str) -> List[OutgoingMessage]:
@@ -626,8 +624,8 @@ class GameSession:
             timeout_seconds = int(ServerConfig().TIMEOUT_RECONNECTION)
             self.reconnect_timeout = datetime.now() + timedelta(seconds=timeout_seconds)
             
-            logger.warning(
-                f"[SESSION {self.session_id}] Jugador {player_id} desconectado. "
+            self.logger.warning(
+                f"[SESSION {self.session_id}] Jugador {player_id[:8]} desconectado. "
                 f"Timer: {timeout_seconds}s"
             )
             
@@ -672,7 +670,7 @@ class GameSession:
             winner_id = self._get_other_player(self.disconnected_player)
             loser_id = self.disconnected_player
             
-            logger.warning(
+            self.logger.warning(
                 f"[SESSION {self.session_id}] Reconexión expirada. "
                 f"{winner_id} gana por timeout de reconexión."
             )
@@ -811,6 +809,8 @@ class BatallaNavalServer:
         self.cleanup_thread = None
         self.cleanup_running = False
 
+        self.logger = logging.getLogger("ServerNaval")
+
 
     def start(self):
         """
@@ -843,13 +843,13 @@ class BatallaNavalServer:
             )
             self.cleanup_thread.start()
             
-            logger.info(f"Servidor iniciado en {self.host}:{self.port}")
-            logger.info(f"Thread de limpieza iniciado (intervalo: {int(ServerConfig().CLEANUP_CHECK_INTERVAL)}s)")
+            self.logger.info(f"Servidor iniciado en {self.host}:{self.port}")
+            self.logger.info(f"Thread de limpieza iniciado (intervalo: {int(ServerConfig().CLEANUP_CHECK_INTERVAL)}s)")
             
             while self.running:
                 try:
                     client_socket, client_address = self.server_socket.accept()
-                    logger.info(f"Conexión desde {client_address}")
+                    self.logger.info(f"Conexión desde {client_address}")
                     
                     thread = threading.Thread(
                         target=self._handle_client,
@@ -862,12 +862,12 @@ class BatallaNavalServer:
                     continue
                 except Exception as e:
                     if self.running:
-                        logger.error(f"Error aceptando conexión: {e}")
+                        self.logger.error(f"Error aceptando conexión: {e}")
                         
         except KeyboardInterrupt:
-            logger.info("Interrupción detectada (Ctrl+C)")
+            self.logger.info("Interrupción detectada (Ctrl+C)")
         except Exception as e:
-            logger.error(f"Error en servidor: {e}")
+            self.logger.error(f"Error en servidor: {e}")
         finally:
             self.stop()
 
@@ -878,7 +878,7 @@ class BatallaNavalServer:
         Establece running = False, cierra el socket del servidor,
         detiene el thread de limpieza, e impide que acepte nuevas conexiones.
         """
-        logger.info("Deteniendo servidor...")
+        self.logger.info("Deteniendo servidor...")
         self.running = False
         self.cleanup_running = False
         
@@ -895,7 +895,7 @@ class BatallaNavalServer:
             except:
                 pass
         
-        logger.info("Servidor detenido")
+        self.logger.info("Servidor detenido")
 
     # ============================================================
     # LIMPIEZA AUTOMÁTICA DE SESIONES
@@ -927,7 +927,7 @@ class BatallaNavalServer:
                     should_close, messages = session.check_reconnection_timeout()
                     
                     if should_close:
-                        logger.warning(
+                        self.logger.warning(
                             f"[SESSION {session_id}] Cerrando sesión por timeout de reconexión"
                         )
                         # Enviar mensajes pendientes
@@ -945,7 +945,7 @@ class BatallaNavalServer:
                     # Si ha pasado el timeout y no se conectó el segundo jugador
                     if (len(session.players) == 1 and 
                         time_since_creation > int(ServerConfig().TIMEOUT_WAITING_FOR_OPPONENT)):
-                        logger.warning(
+                        self.logger.warning(
                             f"[SESSION {session_id}] Cerrando por timeout de espera de oponente "
                             f"({time_since_creation}s)"
                         )
@@ -956,7 +956,7 @@ class BatallaNavalServer:
                     self._remove_session(session_id)
                     
             except Exception as e:
-                logger.error(f"Error en cleanup_loop: {e}")
+                self.logger.error(f"Error en cleanup_loop: {e}")
 
     def _remove_session(self, session_id: str):
         """
@@ -992,7 +992,7 @@ class BatallaNavalServer:
         # Eliminar sesión
         del self.sessions[session_id]
         
-        logger.info(f"[SESSION {session_id}] Sesión eliminada del servidor")
+        self.logger.info(f"[SESSION {session_id}] Sesión eliminada del servidor")
 
     # ============================================================
     # MANEJO DE CLIENTE
@@ -1016,11 +1016,11 @@ class BatallaNavalServer:
         try:
             request = client_socket.recv(4096).decode('utf-8')
             if not self._websocket_handshake(client_socket, request):
-                logger.warning(f"Handshake fallido desde {client_address}")
+                self.logger.warning(f"Handshake fallido desde {client_address}")
                 client_socket.close()
                 return
 
-            logger.info(f"WebSocket establecido con {client_address}")
+            self.logger.info(f"WebSocket establecido con {client_address}")
             
             while self.running:
                 frame = self._receive_websocket_frame(client_socket)
@@ -1055,11 +1055,11 @@ class BatallaNavalServer:
                 except json.JSONDecodeError:
                     self._send_error(client_socket, 401, "JSON inválido")
                 except Exception as e:
-                    logger.error(f"Error procesando mensaje: {e}")
+                    self.logger.error(f"Error procesando mensaje: {e}")
                     self._send_error(client_socket, 500, "Error interno")
                     
         except Exception as e:
-            logger.error(f"Error en cliente {client_address}: {e}")
+            self.logger.error(f"Error en cliente {client_address}: {e}")
         finally:
             self._cleanup_client(client_socket, player_id, session_id)
 
@@ -1103,7 +1103,7 @@ class BatallaNavalServer:
                 session_id = str(uuid.uuid4())
                 available_session = GameSession(session_id)
                 self.sessions[session_id] = available_session
-                logger.info(f"Nueva sesión creada: {session_id}")
+                self.logger.info(f"Nueva sesión creada: {session_id}")
             else:
                 session_id = available_session.session_id
             
@@ -1124,7 +1124,7 @@ class BatallaNavalServer:
             return player_id, session_id
             
         except Exception as e:
-            logger.error(f"Error en join_game: {e}")
+            self.logger.error(f"Error en join_game: {e}")
             self._send_error(client_socket, 500, "Error interno")
             return None, None
 
@@ -1156,7 +1156,7 @@ class BatallaNavalServer:
             
             if session_id not in self.sessions:
                 # Sesión no existe o fue eliminada por timeout
-                logger.warning(f"Intento de reconexión a sesión inexistente: {session_id}")
+                self.logger.warning(f"Intento de reconexión a sesión inexistente: {session_id}")
                 error_response = {
                     'type': 'game_over',
                     'code': 220,
@@ -1171,9 +1171,9 @@ class BatallaNavalServer:
             
             session = self.sessions[session_id]
             
-            if player_id not in session.players:
-                logger.warning(
-                    f"Intento de reconexión con jugador inexistente: {player_id} en {session_id}"
+            if player_id and player_id not in session.players:
+                self.logger.warning(
+                    f"Intento de reconexión con jugador inexistente: {player_id[:8]} en {session_id}"
                 )
                 error_response = {
                     'type': 'error',
@@ -1197,11 +1197,11 @@ class BatallaNavalServer:
             # Enviar mensajes
             self._send_messages(session, messages)
             
-            logger.info(f"[SESSION {session_id}] Jugador {player_id} reconectado")
+            self.logger.info(f"[SESSION {session_id}] Jugador {player_id[:8]} reconectado")
             return player_id, session_id
             
         except Exception as e:
-            logger.error(f"Error en reconnect: {e}")
+            self.logger.error(f"Error en reconnect: {e}")
             self._send_error(client_socket, 500, "Error interno")
             return None, None
 
@@ -1247,7 +1247,7 @@ class BatallaNavalServer:
             self._send_messages(session, messages)
             
         except Exception as e:
-            logger.error(f"Error en place_ships: {e}")
+            self.logger.error(f"Error en place_ships: {e}")
             self._send_error(client_socket, 500, "Error interno")
 
     def _handle_attack(self, client_socket: socket.socket, player_id: Optional[str],
@@ -1293,7 +1293,7 @@ class BatallaNavalServer:
             self._send_messages(session, messages)
             
         except Exception as e:
-            logger.error(f"Error en attack: {e}")
+            self.logger.error(f"Error en attack: {e}")
             self._send_error(client_socket, 500, "Error interno")
 
     def _handle_surrender(self, client_socket: socket.socket, player_id: Optional[str],
@@ -1332,7 +1332,7 @@ class BatallaNavalServer:
             self._send_messages(session, messages)
             
         except Exception as e:
-            logger.error(f"Error en surrender: {e}")
+            self.logger.error(f"Error en surrender: {e}")
             self._send_error(client_socket, 500, "Error interno")
 
     # ============================================================
@@ -1371,7 +1371,7 @@ class BatallaNavalServer:
             frame = self._create_websocket_frame(json_str)
             client_socket.send(frame)
         except Exception as e:
-            logger.error(f"Error enviando mensaje: {e}")
+            self.logger.error(f"Error enviando mensaje: {e}")
 
     def _send_error(self, client_socket: socket.socket, code: int, message: str):
         """
@@ -1417,7 +1417,7 @@ class BatallaNavalServer:
             messages = session.mark_player_disconnected(player_id)
             self._send_messages(session, messages)
             
-            logger.warning(f"[SESSION {session_id}] Jugador {player_id} desconectado")
+            self.logger.warning(f"[SESSION {session_id}] Jugador {player_id[:8]} desconectado")
 
         # Limpiar mapeos
         if client_socket in self.socket_to_player:
@@ -1475,7 +1475,7 @@ class BatallaNavalServer:
             return True
             
         except Exception as e:
-            logger.error(f"Error en handshake: {e}")
+            self.logger.error(f"Error en handshake: {e}")
             return False
 
     def _receive_websocket_frame(self, client_socket: socket.socket) -> Optional[str]:
@@ -1509,23 +1509,23 @@ class BatallaNavalServer:
 
             if not masked:
                 try:
-                    logger.warning("Cliente envió frame no enmascarado, cerrando conexión")
+                    self.logger.warning("Cliente envió frame no enmascarado, cerrando conexión")
                     client_socket.close()
                 except:
-                    logger.warning("Cliente envió frame no enmascarado, cerrando conexión (error al cerrar)")
+                    self.logger.warning("Cliente envió frame no enmascarado, cerrando conexión (error al cerrar)")
                 return None
                     
 
             # Extended payload length
             if payload_length == 126:
                 if len(data) < index + 2:
-                    logger.warning("Frame con payload length 126 pero datos insuficientes")
+                    self.logger.warning("Frame con payload length 126 pero datos insuficientes")
                     return None
                 payload_length = int.from_bytes(data[index:index+2], 'big')
                 index += 2
             elif payload_length == 127:
                 if len(data) < index + 8:
-                    logger.warning("Frame con payload length 127 pero datos insuficientes")
+                    self.logger.warning("Frame con payload length 127 pero datos insuficientes")
                     return None
                 payload_length = int.from_bytes(data[index:index+8], 'big')
                 index += 8
@@ -1541,14 +1541,14 @@ class BatallaNavalServer:
 
             # Masking key
             if len(data) < index + 4:
-                logger.warning("Frame con máscara pero datos insuficientes para la clave de enmascarado")
+                self.logger.warning("Frame con máscara pero datos insuficientes para la clave de enmascarado")
                 return None
             masking_key = data[index:index + 4]
             index += 4
 
             # Payload
             if len(data) < index + payload_length:
-                logger.warning("Frame con payload pero datos insuficientes para el payload completo")
+                self.logger.warning("Frame con payload pero datos insuficientes para el payload completo")
                 return None
 
             payload = data[index:index + payload_length]
@@ -1564,7 +1564,7 @@ class BatallaNavalServer:
                     return payload.decode('utf-8')
                 except UnicodeDecodeError as e:
                     # Log detallado para debug
-                    logger.error(
+                    self.logger.error(
                         f"UnicodeDecodeError al decodificar payload: {e}\n"
                         f"Payload length: {len(payload)} bytes\n"
                         f"Primeros 100 bytes (hex): {payload[:100].hex()}\n"
@@ -1575,11 +1575,11 @@ class BatallaNavalServer:
                     try:
                         return payload.decode('utf-8', errors='replace')
                     except Exception as inner_e:
-                        logger.error(f"Falló recuperación con errors='replace': {inner_e}")
+                        self.logger.error(f"Falló recuperación con errors='replace': {inner_e}")
                         return None
 
             # Si llega binario y no lo usas
-            logger.warning(f"Recibido frame con opcode {opcode} no soportado")
+            self.logger.warning(f"Recibido frame con opcode {opcode} no soportado")
             return None
 
         except Exception:

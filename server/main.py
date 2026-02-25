@@ -17,7 +17,9 @@ from network.server import BatallaNavalServer
 
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(asctime)s] - %(levelname)s - %(message)s'
+    format='%(asctime)s | %(levelname)-8s | %(name)s | %(filename)s:%(lineno)d | %(message)s',
+    datefmt='%H:%M:%S',
+    force=True
 )
 logger = logging.getLogger(__name__)
 

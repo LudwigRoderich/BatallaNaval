@@ -70,13 +70,13 @@ class Game:
             )
 
         if player_id in self._players:
-            raise PlayerError(f"Player '{player_id}' already exists in the game.")
+            raise PlayerError(f"Player '{player_id[:8]}' already exists in the game.")
 
         if len(self._players) >= 2:
             raise PlayerError("Game already has 2 players.")
 
         self._players[player_id] = Player(player_id, self._board_size)
-        print(f"Player '{player_id}' added to the game.")
+        print(f"Player '{player_id[:8]}' added to the game.")
         if len(self._players) == 2:
             print("Two players have joined. Starting the game...")
             try:
@@ -103,14 +103,13 @@ class Game:
             )
 
         if player_id not in self._players:
-            raise PlayerError(f"Player '{player_id}' not found in the game.")
+            raise PlayerError(f"Player '{player_id[:8]}' not found in the game.")
 
         try:
             self._players[player_id].place_ship(ship)
-            print(f"Player '{player_id}' placed ship '{ship.ship_id}'.")
         except PlayerError as e:
             raise GameError(
-                f"Player '{player_id}' failed to place ship '{ship.ship_id}: {e}'"
+                f"Player '{player_id[:8]}' failed to place ship '{ship.ship_id}: {e}'"
             ) from e
 
 
@@ -299,7 +298,7 @@ class Game:
             PlayerError: Si el player_id no existe en el juego.
         """
         if player_id not in self._players:
-            raise PlayerError(f"Player '{player_id}' not found in the game.")
+            raise PlayerError(f"Player '{player_id[:8]}' not found in the game.")
 
         opponent_id = self._get_other_player(player_id)
         opponent_board_state = self._players[opponent_id].get_public_board_state()
@@ -371,7 +370,7 @@ class Game:
             PlayerError: If the player is not in the game.
         """
         if player_id not in self._players:
-            raise PlayerError(f"Player '{player_id}' not found in the game.")
+            raise PlayerError(f"Player '{player_id[:8]}' not found in the game.")
 
         for pid in self._players:
             if pid != player_id:

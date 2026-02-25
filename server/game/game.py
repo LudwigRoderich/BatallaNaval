@@ -77,6 +77,13 @@ class Game:
 
         self._players[player_id] = Player(player_id, self._board_size)
         print(f"Player '{player_id}' added to the game.")
+        if len(self._players) == 2:
+            print("Two players have joined. Starting the game...")
+            try:
+                self.start()
+            except GameStateError as e:
+                print(f"Error starting game: {e}")
+
 
     def place_ship(self, player_id: str, ship: Ship) -> None:
         """
@@ -103,16 +110,21 @@ class Game:
             print(f"Player '{player_id}' placed ship '{ship.ship_id}'.")
         except PlayerError as e:
             raise GameError(
-                f"Player '{player_id}' failed to place ship '{ship.ship_id}'"
+                f"Player '{player_id}' failed to place ship '{ship.ship_id}: {e}'"
             ) from e
 
 
     def start(self) -> None:
         """
-        Start the game.
+        Inicia la preparación del juego (fase de colocación de barcos).
+        
+        Requiere que el juego esté en el estado WAITING_FOR_PLAYERS
+        y que ambos jugadores ya hayan sidomodo.
+        Los jugadores pueden comenzar a colocar sus barcos.
 
         Raises:
-            GameStateError: If the game is not ready to start.
+            GameStateError: Si el juego no está en estado WAITING_FOR_PLAYERS
+                           o si hay menos de 2 jugadores.
         """
         if self._state != GameState.WAITING_FOR_PLAYERS:
             raise GameStateError(
@@ -132,10 +144,15 @@ class Game:
 
     def finish_ship_placement(self) -> None:
         """
-        Transition from ship placement to game in progress.
+        Finaliza la fase de colocación de barcos e inicia el juego.
+        
+        Transiciona del estado PLACING_SHIPS a IN_PROGRESS,
+        establece el turno inicial al primer jugador,
+        y el juego está listo para comenzar a recibir ataques.
 
         Raises:
-            GameStateError: If the game is not in PLACING_SHIPS state.
+            GameStateError: Si el juego no está en estado PLACING_SHIPS 
+                           o si no todos los jugadores han colocado todos sus barcos.
         """
         if self._state != GameState.PLACING_SHIPS:
             raise GameStateError(
@@ -154,19 +171,23 @@ class Game:
 
     def attack(self, attacker_id: str, coord: Coordinate) -> AttackResult:
         """
-        Execute an attack from one player to another.
-
+        Ejecuta un ataque de un jugador contra otro.
+        
+        Valida que es el turno del atacante, procesa el ataque en el tablero del defensor,
+        actualiza el tablero de seguimiento del atacante, cambia de turno (excepto si es un acierto),
+        y verifica si el juego ha terminado.
+        
         Args:
-            attacker_id: The ID of the attacking player.
-            coord: The coordinate to attack.
+            attacker_id: El ID del jugador que ataca.
+            coord: La coordenada a atacar.
 
         Returns:
-            An AttackResult object with the outcome.
+            AttackResult con el resultado del ataque (outcome, ship_sunk, game_finished, etc).
 
         Raises:
-            GameStateError: If the game is not in progress.
-            PlayerError: If the attacker is not in the game or it's not their turn.
-            InvalidCoordinateError: If the coordinate is invalid.
+            GameStateError: Si el juego no está en progreso (IN_PROGRESS).
+            PlayerError: Si el atacante no existe o no es su turno.
+            InvalidCoordinateError: Si la coordenada es inválida.
         """
         if self._state != GameState.IN_PROGRESS:
             raise GameStateError(
@@ -253,13 +274,29 @@ class Game:
 
     def get_public_state_for(self, player_id: str) -> dict:
         """
-        Get the public game state visible to a specific player.
+        Obtiene el estado actual del juego visible para un jugador específico.
+        
+        Incluye información sobre su propio estado, turn actual, información del oponente
+        (pero no las posiciones de sus barcos), y el estado del juego global.
 
         Args:
-            player_id: The ID of the player.
+            player_id: El ID del jugador.
 
         Returns:
-            A dictionary with the public game state.
+            Diccionario con las siguientes claves:
+            - game_state: Estado actual del juego (WAITING_FOR_PLAYERS, PLACING_SHIPS, IN_PROGRESS, FINISHED)
+            - current_turn: ID del jugador cuyo turno es
+            - move_count: Número total de movimientos realizados
+            - your_id: ID del jugador consultante
+            - opponent_id: ID del oponente
+            - your_ships: Cantidad de objetos Ship que posee el jugador
+            - opponent_board: Estado del tablero del oponente (visible)
+            - opponent_ships_sunk: Cantidad de barcos hundidos del oponente
+            - is_finished: True si el juego ha terminado
+            - winner: ID del ganador (None si no ha terminado)
+
+        Raises:
+            PlayerError: Si el player_id no existe en el juego.
         """
         if player_id not in self._players:
             raise PlayerError(f"Player '{player_id}' not found in the game.")
@@ -344,10 +381,13 @@ class Game:
     
     def all_ships_placed(self) -> bool:
         """
-        Check if all players have placed all their ships.
+        Verifica si todos los jugadores han colocado todos sus barcos.
+        
+        Recorre todos los jugadores y chequea que cada uno haya colocado
+        todos los barcos requeridos según ShipType.
 
         Returns:
-            True if all players have placed all their ships.
+            True si todos los jugadores han completado la colocación de barcos, False en caso contrario.
         """
         for player in self._players.values():
             if not player.all_ships_placed():
@@ -355,7 +395,12 @@ class Game:
         return True
 
     def _switch_turn(self) -> None:
-        """Switch the current turn to the other player."""
+        """
+        Cambia el turno al otro jugador.
+        
+        Modifica self._current_turn al ID del otro jugador.
+        Solo debe llamarse durante un juego en progreso.
+        """
         if self._current_turn is not None:
             self._current_turn = self._get_other_player(self._current_turn)
 

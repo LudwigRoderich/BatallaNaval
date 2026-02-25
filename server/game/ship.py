@@ -4,7 +4,7 @@ Ship class for the Battleship game.
 """
 
 from dataclasses import dataclass
-from typing import Set
+from typing import Set, List
 from .enums import ShipType, ShipOrientation
 
 
@@ -33,7 +33,7 @@ class Ship:
         self,
         ship_id: str,
         ship_type: ShipType,
-        positions: Set[Coordinate],
+        positions: List[Coordinate],
         orientation: ShipOrientation
     ) -> None:
         """
@@ -53,9 +53,15 @@ class Ship:
                 f"{ship_type.length} positions, but {len(positions)} were provided."
             )
 
+        # Sort positions based on orientation
+        sorted_positions = sorted(
+            positions,
+            key=lambda coord: coord.x if orientation == ShipOrientation.HORIZONTAL else coord.y
+        )
+
         self._ship_id = ship_id
         self._ship_type = ship_type
-        self._positions = frozenset(positions)
+        self._positions = frozenset(sorted_positions)
         self._hits: Set[Coordinate] = set()
         self._orientation = orientation
 

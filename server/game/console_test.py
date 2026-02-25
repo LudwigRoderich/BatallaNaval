@@ -20,18 +20,18 @@ def generar_barco_aleatorio(ship_id: str, ship_type: ShipType, board_size: int, 
     import random
 
     length = ship_type.length
-    positions = set()
+    positions = list()
 
     if orientation == ShipOrientation.HORIZONTAL:
         x_start = random.randint(0, board_size - length)
         y = random.randint(0, board_size - 1)
         for i in range(length):
-            positions.add(Coordinate(x_start + i, y))
+            positions.append(Coordinate(x_start + i, y))
     else:  # VERTICAL
         x = random.randint(0, board_size - 1)
         y_start = random.randint(0, board_size - length)
         for i in range(length):
-            positions.add(Coordinate(x, y_start + i))
+            positions.append(Coordinate(x, y_start + i))
 
     return Ship(ship_id=ship_id, ship_type=ship_type, positions=positions, orientation=orientation)
 
@@ -120,10 +120,3 @@ while not game.is_finished():
 print(f"\nJuego terminado en {contador_ataques} ataques")
 print(game.get_game_result())
 
-
-# game.place_ship(player_id=player1.player_id, ship=generar_barco_aleatorio(
-#     ship_id="extra_ship",
-#     ship_type=random.choice(list(ShipType)),
-#     board_size=10, 
-#     orientation=random.choice(list(ShipOrientation))
-# ))

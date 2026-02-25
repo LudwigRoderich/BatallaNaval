@@ -96,6 +96,12 @@ class Board:
     def place_ship(self, ship: Ship) -> None:
         """
         Place a ship on the board.
+        
+        Valida que la posición del barco sea válida, verificando:
+        - Que todas las coordenadas estén dentro del tablero
+        - Que no haya solapamiento con barcos existentes
+        - Que el barco forme una línea recta según su orientación
+        - Que solo haya un barco de cada tipo en el tablero
 
         Args:
             ship: The ship to place.
@@ -103,6 +109,8 @@ class Board:
         Raises:
             InvalidCoordinateError: If any ship position is out of bounds.
             ShipOverlapError: If the ship overlaps with an existing ship.
+            ShipPlacementError: If ship coordinates are invalid for its type/orientation,
+                or if a ship of this type is already placed on the board.
         """
         # Validate all positions
         for coord in ship.positions:
@@ -247,16 +255,23 @@ class Board:
     def are_coordinates_valid_for_ship(self, ship: Ship) -> bool:
         """
         Check if the ship's coordinates are valid (in a straight line and match ship length).
+        
+        Verifica que el barco ocupe exactamente el número de coordenadas correspondientes
+        a su tipo, y que todas las coordenadas estén en línea recta (HORIZONTAL o VERTICAL)
+        según su orientación, con posiciones consecutivas y sin huecos.
 
         Args:
             ship: The ship to validate.
+        
         Returns:
-            True if the coordinates are valid for the ship type, False otherwise.
+            True if the coordinates are valid for the ship type and orientation, 
+            False otherwise.
         """
         coords = sorted(ship.positions, key=lambda c: (c.x, c.y))
         if len(coords) != ship.ship_type.length:
             return False
         
+        print(f"Validating ship of type {ship.ship_type.name} with coordinates: {coords} and orientation {ship._orientation.name}")
         if ship._orientation == ShipOrientation.HORIZONTAL:
             # Verify that all y coordinates are the same and x coordinates are consecutive
             return all(coord.y == coords[0].y for coord in coords) and \

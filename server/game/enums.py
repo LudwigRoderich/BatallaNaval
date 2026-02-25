@@ -31,17 +31,21 @@ class GameState(Enum):
 
 
 class ShipType(Enum):
-    """Represents different types of ships and their sizes."""
-    AIRCRAFT_CARRIER = 5
-    BATTLESHIP = 4
-    CRUISER = 3
-    DESTROYER = 3
-    SUBMARINE = 2
+    AIRCRAFT_CARRIER = auto()
+    BATTLESHIP = auto()
+    CRUISER = auto()
+    DESTROYER = auto()
+    SUBMARINE = auto()
 
     @property
     def length(self) -> int:
-        """Returns the length of the ship."""
-        return self.value
+        return {
+            ShipType.AIRCRAFT_CARRIER: 5,
+            ShipType.BATTLESHIP: 4,
+            ShipType.CRUISER: 3,
+            ShipType.DESTROYER: 3,
+            ShipType.SUBMARINE: 2,
+        }[self]
 
 
 class ShipOrientation(Enum):

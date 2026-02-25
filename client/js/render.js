@@ -64,7 +64,7 @@ const Renderer = {
     /**
      * Actualiza el estado de una celda específica
      */
-    updateCell(boardId, x, y, state) {
+    updateCell(boardId, x, y, state, shipType = null) {
         const board = document.getElementById(boardId);
         if (!board) return;
         
@@ -74,8 +74,20 @@ const Renderer = {
         // Remover estados anteriores
         cell.classList.remove('empty', 'ship', 'hit', 'miss', 'sunk');
         
+        // Remover clases de tipo de barco
+        cell.classList.remove(
+            'aircraft-carrier', 'battleship', 'cruiser', 'destroyer', 'submarine'
+        );
+        
         // Añadir nuevo estado
         cell.classList.add(state);
+        
+        // Si es un barco, añadir clase del tipo
+        if (shipType && state === 'ship') {
+            // Convertir AIRCRAFT_CARRIER a aircraft-carrier para la clase CSS
+            const shipClass = shipType.toLowerCase().replace(/_/g, '-');
+            cell.classList.add(shipClass);
+        }
     },
     
     /**
@@ -165,9 +177,9 @@ const Renderer = {
     /**
      * Coloca un barco en el tablero visualmente
      */
-    placeShipOnBoard(boardId, positions) {
+    placeShipOnBoard(boardId, positions, shipType = null) {
         positions.forEach(pos => {
-            this.updateCell(boardId, pos.x, pos.y, 'ship');
+            this.updateCell(boardId, pos.x, pos.y, 'ship', shipType);
         });
     },
     
@@ -282,12 +294,134 @@ const Renderer = {
         }, 30);
     },
     
+    
+    /**
+     * Muestra pantalla de conexión
+     */
+    showConnecting() {
+        console.log('[RENDER] Mostrando pantalla de conexión');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Conectando...',
+            'Estableciendo conexión con el servidor'
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de espera de oponente
+     */
+    showWaitingForOpponent(playerName) {
+        console.log('[RENDER] Esperando oponente...');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Esperando oponente...',
+            `Hola ${playerName}, esperando a que otro jugador se una a la partida`
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de espera de posicionamiento
+     */
+    showWaitingForShipPlacement() {
+        console.log('[RENDER] Esperando posicionamiento del oponente');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Esperando posicionamiento...',
+            'Tu oponente está colocando sus barcos'
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de espera de turno del oponente
+     */
+    showWaitingForOpponentTurn(opponentName) {
+        console.log('[RENDER] Turno del oponente');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Turno del oponente',
+            `Aguardando movimiento de ${opponentName}...`
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de reconexión
+     */
+    showReconnecting() {
+        console.log('[RENDER] Reconectando...');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Reconectando...',
+            'Reestableciendo conexión con el servidor'
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de desconexión
+     */
+    showDisconnected() {
+        console.log('[RENDER] ❌ Desconectado');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            '❌ Desconectado',
+            'Se perdió la conexión del servidor. Reconectando automáticamente...',
+            true
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Crea elemento de pantalla de carga
+     */
+    _createLoadingScreen(title, message, isError = false) {
+        const container = document.createElement('div');
+        container.id = 'loading-screen';
+        container.className = isError ? 'loading-screen error' : 'loading-screen';
+        
+        const content = document.createElement('div');
+        content.className = 'loading-content';
+        
+        const titleEl = document.createElement('h2');
+        titleEl.textContent = title;
+        
+        const messageEl = document.createElement('p');
+        messageEl.textContent = message;
+        
+        const spinner = document.createElement('div');
+        spinner.className = 'loading-spinner';
+        
+        content.appendChild(spinner);
+        content.appendChild(titleEl);
+        content.appendChild(messageEl);
+        container.appendChild(content);
+        
+        return container;
+    },
+    
+    /**
+     * Limpia la pantalla de carga
+     */
+    clearLoadingScreen() {
+        const loadingScreen = document.getElementById('loading-screen');
+        if (loadingScreen) {
+            console.log('[RENDER] Limpiando pantalla de carga');
+            loadingScreen.remove();
+        }
+    },
+    
     /**
      * Muestra/oculta el estado de carga
      */
     toggleLoading(show, message = 'Cargando...') {
-        // Placeholder para futura implementación de loading screen
-        console.log(show ? `Loading: ${message}` : 'Loading complete');
+        if (show) {
+            this.showConnecting();
+        } else {
+            this.clearLoadingScreen();
+        }
     },
     
     /**
@@ -304,6 +438,54 @@ const Renderer = {
                 });
             }
         });
+    },
+    
+    /**
+     * Habilita/deshabilita el tablero de ataque
+     * Client reactivo: solo renderiza, nunca decide lógica
+     */
+    enableAttackBoard(enabled) {
+        const board = document.getElementById('attack-board');
+        if (board) {
+            board.style.pointerEvents = enabled ? 'auto' : 'none';
+            board.style.opacity = enabled ? '1' : '0.5';
+            
+            const turnEl = document.getElementById('current-turn');
+            if (turnEl) {
+                if (enabled) {
+                    turnEl.textContent = '¡Es tu turno!';
+                    turnEl.style.color = '#4CAF50';
+                } else {
+                    turnEl.textContent = 'Esperando turno...';
+                    turnEl.style.color = '#FF9800';
+                }
+            }
+        }
+    },
+
+    /**
+     * Muestra pantalla de espera durante colocación de barcos
+     */
+    showWaitingForShipPlacement() {
+        console.log('[RENDER] Mostrando pantalla de espera de barcos');
+        this.clearLoadingScreen();
+        const loading = this._createLoadingScreen(
+            'Esperando al oponente...',
+            'Tu oponente está colocando sus barcos'
+        );
+        document.body.appendChild(loading);
+    },
+    
+    /**
+     * Muestra pantalla de espera del turno del oponente
+     */
+    showWaitingForOpponentTurn(opponentName) {
+        const turnEl = document.getElementById('current-turn');
+        if (turnEl) {
+            turnEl.textContent = `Turno de ${opponentName}`;
+            turnEl.style.color = '#FF9800';
+        }
+        Renderer.enableAttackBoard(false);
     }
 };
 

@@ -99,8 +99,16 @@
             <h2 class="screen-title">COMBATE ACTIVO</h2>
             <div class="game-info">
                 <div class="info-item">
+                    <span class="label">TÚ:</span>
+                    <span id="game-player-name" class="value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">OPONENTE:</span>
+                    <span id="game-opponent-name" class="value">-</span>
+                </div>
+                <div class="info-item">
                     <span class="label">TURNO:</span>
-                    <span id="current-turn" class="value"></span>
+                    <span id="current-turn" class="value">-</span>
                 </div>
                 <div class="info-item">
                     <span class="label">MOVIMIENTOS:</span>
@@ -187,9 +195,10 @@
         </div>
     </section>
 
-    <script src="js/main.js"></script>
+    <!-- Scripts en orden correcto: Dependencias primero, main.js último -->
     <script src="js/state.js"></script>
     <script src="js/api.js"></script>
     <script src="js/render.js"></script>
+    <script src="js/main.js"></script>
 </body>
 </html>

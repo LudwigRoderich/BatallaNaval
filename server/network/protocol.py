@@ -179,8 +179,19 @@ class Protocol:
 
     @staticmethod
     def validate_join_message(data: Dict) -> Tuple[bool, str]:
-        """Valida mensajes de tipo 'join_game'."""
-        required = ["playerId", "playerName"]
+        """
+        Valida mensajes de tipo 'join_game'.
+        
+        Verifica que el mensaje contenga todos los campos obligatorios para
+        que un jugador se una a una partida.
+        
+        Args:
+            data: Diccionario con los datos del mensaje a validar.
+        
+        Returns:
+            Tupla (válido: bool, mensaje_error: str). Si válido es True, mensaje_error es vacío.
+        """
+        required = ["playerName"]
         for field in required:
             if field not in data:
                 return False, f"Campo obligatorio faltante: {field}"
@@ -188,7 +199,18 @@ class Protocol:
 
     @staticmethod
     def validate_reconnect_message(data: Dict) -> Tuple[bool, str]:
-        """Valida mensajes de tipo 'reconnect'."""
+        """
+        Valida mensajes de tipo 'reconnect'.
+        
+        Verifica que el mensaje contenga los campos necesarios para que un jugador
+        se reconecte a una partida existente.
+        
+        Args:
+            data: Diccionario con los datos del mensaje a validar.
+        
+        Returns:
+            Tupla (válido: bool, mensaje_error: str). Si válido es True, mensaje_error es vacío.
+        """
         required = ["gameId", "playerId"]
         for field in required:
             if field not in data:
@@ -197,7 +219,18 @@ class Protocol:
 
     @staticmethod
     def validate_place_ships_message(data: Dict) -> Tuple[bool, str]:
-        """Valida mensajes de tipo 'place_ships'."""
+        """
+        Valida mensajes de tipo 'place_ships'.
+        
+        Verifica que el mensaje contenga todos los campos requeridos para que un jugador
+        coloque sus barcos, y que el campo 'ships' sea una lista válida.
+        
+        Args:
+            data: Diccionario con los datos del mensaje a validar.
+        
+        Returns:
+            Tupla (válido: bool, mensaje_error: str). Si válido es True, mensaje_error es vacío.
+        """
         required = ["gameId", "playerId", "ships"]
         for field in required:
             if field not in data:
@@ -210,7 +243,18 @@ class Protocol:
 
     @staticmethod
     def validate_attack_message(data: Dict) -> Tuple[bool, str]:
-        """Valida mensajes de tipo 'attack'."""
+        """
+        Valida mensajes de tipo 'attack'.
+        
+        Verifica que el mensaje contenga los campos requeridos para que un jugador
+        realice un ataque, incluyendo validación del formato de la coordenada.
+        
+        Args:
+            data: Diccionario con los datos del mensaje a validar.
+        
+        Returns:
+            Tupla (válido: bool, mensaje_error: str). Si válido es True, mensaje_error es vacío.
+        """
         required = ["gameId", "playerId", "coordinate"]
         for field in required:
             if field not in data:

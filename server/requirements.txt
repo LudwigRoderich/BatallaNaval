@@ -1,7 +1,118 @@
-# Requisitos del Servidor de Batalla Naval
-# El servidor usa solo la librería estándar de Python
-# No hay dependencias externas requeridas
+# ============================================================
+# BATALLA NAVAL - DEPENDENCIAS DEL SERVIDOR
+# ============================================================
+#
+# Instala con: pip install -r requirements.txt
+#
+# Notas:
+# - Las librerías de la stdlib de Python (os, sys, json, etc.) 
+#   NO están listadas aquí (se incluyen con Python)
+# - Las librerías opcionales están comentadas
+#
 
-# Para desarrollo y testing:
-websockets>=10.0  # Solo para example_client.py (testing)
-python-dotenv>=0.19.0  # Para cargar variables de entorno desde .env
+# ============================================================
+# DEPENDENCIAS PRINCIPALES - REQUERIDAS
+# ============================================================
+
+# FastAPI - Framework web moderno basado en Python 3.6+
+# Usado para: Servidor HTTP, API REST, CORS middleware, static files
+# Versión: 0.104.1 (estable, compatible con Python 3.8+)
+fastapi==0.104.1
+
+# Uvicorn - ASGI server compatible con FastAPI
+# Usado para: Ejecutar el servidor, hot reload, gestión de procesos
+# [standard] incluye extras como uvloop, httptools, etc.
+# Versión: 0.24.0 (compatible con FastAPI 0.104.1)
+uvicorn[standard]==0.24.0
+
+# Python-dotenv - Manejo de variables de entorno desde archivos .env
+# Usado para: Cargar configuración desde server/.env
+# Versión: 1.0.0 (última versión estable)
+python-dotenv==1.0.0
+
+# ============================================================
+# DEPENDENCIAS OPCIONALES - SOLO PARA DESARROLLO/TESTING
+# ============================================================
+
+# NumPy - Librería numérica para cálculos matemáticos
+# Usado en: game/console_test.py (testing de lógica de juego)
+# Opcional: Solo si ejecutas tests o console_test.py
+# Descomenta si necesitas:
+# numpy==1.24.3
+
+# Websockets - Cliente WebSocket para Python
+# Usado en: example_client.py (cliente de ejemplo/testing)
+# Opcional: Solo para testing manual del servidor
+# Descomenta si necesitas:
+# websockets==12.0
+
+# ============================================================
+# HERRAMIENTAS DE DESARROLLO OPCIONALES
+# ============================================================
+
+# Descomenta las siguientes líneas si necesitas herramientas de desarrollo:
+
+# Testing Framework
+# pytest==7.4.3  # Framework de testing
+# pytest-asyncio==0.21.1  # Soporte para async testing
+
+# Code Quality
+# black==23.12.0  # Formateador de código (PEP 8)
+# pylint==3.0.3  # Linter static para Python
+# flake8==6.1.0  # Linter estricto (estilo + lógica)
+# mypy==1.7.1  # Type checker estático
+
+# Documentation
+# sphinx==7.2.6  # Generador de documentación
+
+# Performance
+# uvloop==0.19.0  # Event loop más rápido (ya incluido en uvicorn[standard])
+
+# ============================================================
+# INFORMACIÓN DE VERSIONES Y COMPATIBILIDAD
+# ============================================================
+#
+# Python: 3.8+ requerido (FastAPI requiere 3.6+, pero se recomienda 3.8+)
+# FastAPI: 0.104.1 - Última versión estable
+# Uvicorn: 0.24.0 - Compatible con FastAPI 0.104.1
+# python-dotenv: 1.0.0 - Última versión, compatible con Python 3.7+
+# NumPy: 1.24.3 - Compatible con Python 3.9+
+# Websockets: 12.0 - Compatible con Python 3.7+
+#
+# Para actualizar librerías existentes a versiones más recientes:
+#   pip install --upgrade -r requirements.txt
+#
+# Para generar un requirements.txt exacto con tus versiones actuales:
+#   pip freeze > requirements-exact.txt
+#
+# Para instalación en desarrollo (con herramientas):
+#   pip install -r requirements.txt
+#   pip install pytest pytest-asyncio black pylint flake8 mypy
+#
+
+# ============================================================
+# INSTRUCCIONES DE INSTALACIÓN
+# ============================================================
+#
+# 1. Crear entorno virtual (recomendado):
+#    python -m venv venv
+#    source venv/bin/activate  # Linux/Mac
+#    venv\Scripts\activate  # Windows
+#
+# 2. Actualizar pip:
+#    pip install --upgrade pip
+#
+# 3. Instalar dependencias:
+#    pip install -r requirements.txt
+#
+# 4. (Opcional) Instalar herramientas de desarrollo:
+#    pip install pytest pytest-asyncio black pylint flake8 mypy
+#
+# 5. Ejecutar servidor:
+#    python main.py
+#
+# Para verificar que todo está instalado:
+#    pip list
+#    pip freeze | grep -E "fastapi|uvicorn|python-dotenv"
+#
+

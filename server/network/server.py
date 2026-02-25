@@ -1,6 +1,32 @@
 """
 Servidor de Batalla Naval usando WebSockets.
-Maneja la lógica del juego y las conexiones de clientes.
+Arquitectura limpia con separación de responsabilidades:
+- GameSession genera mensajes (qué y para quién)
+- BatallaNavalServer los envía (cómo)
+
+CAMBIOS REALIZADOS (ARQUITECTURA REACTIVA):
+============================================
+
+1. place_ships() - Ahora envía 212 + 215/216 cuando ambos coloquen:
+   - game_state 212 (GAME_STARTED): Notifica que el juego comenzó
+   - game_state 215 (YOUR_TURN): Al jugador que empieza
+   - game_state 216 (WAITING): Al otro jugador
+   - Usa lock threading.Lock() para evitar race conditions
+
+2. execute_attack() - Genera 3 mensajes atómicos:
+   - attack_result al atacante: outcome, x, y, shipSunk
+   - opponent_attack al defensor: outcome, x, y, opponentName, shipSunk
+   - game_state 215/216 a ambos (turno) o 220 a ambos (fin)
+
+3. Reconexión timeout:
+   - mark_player_disconnected(): Inicia timer configurable
+   - check_reconnection_timeout(): Si expira, termina juego por timeout
+   - TIMEOUT_RECONNECTION en config.py (default: 30s)
+
+EL CLIENTE ES 100% REACTIVO:
+- Nunca toma decisiones (no valida turnos, no inicia alarmas)
+- Solo escucha mensajes y pinta lo que el servidor dice
+- El servidor es la ÚNICA fuente de verdad
 """
 
 import socket
@@ -9,14 +35,22 @@ import json
 import base64
 import hashlib
 import logging
-from typing import Dict, Optional, Tuple
+import os
+import uvicorn
+import uuid
+from typing import Dict, Optional, Tuple, List
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from game.game import Game
 from game.ship import Ship, ShipOrientation, Coordinate
-from game.enums import GameState, AttackOutcome
+from game.enums import GameState, AttackOutcome, ShipType
 from network.protocol import Protocol
-from game.enums import ShipType, GameState
+from config import ServerConfig
 
 # Configurar logging
 logging.basicConfig(
@@ -25,89 +59,797 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@dataclass
+class OutgoingMessage:
+    """Mensaje que debe enviarse a un jugador específico."""
+    player_id: str
+    payload: Dict
+
+
+# ============================================================
+# GAMESESSION - LÓGICA DE PARTIDA
+# ============================================================
 
 class GameSession:
-    """Representa una sesión de juego activa."""
+    """
+    Representa una sesión de juego independiente desde su creación hasta su fin.
+    
+    Responsabilidad: Generar los mensajes que deben enviarse basado en la lógica del juego.
+    Esta clase es la "máquina de estados" que coordina todo lo que sucede en una partida,
+    desde la adición de jugadores hasta el fin de la partida.
+    """
 
-    def __init__(self, game_id: str, game: Game):
-        self.game_id = game_id
-        self.game = game
-        self.players = {}  # {player_id: {'name': str, 'socket': socket, 'ready': bool}}
+    def __init__(self, session_id: str, board_size: int = 10):
+        """
+        Inicializa una sesión de juego.
+        
+        Args:
+            session_id: ID único de esta sesión de juego.
+            board_size: Tamaño del tablero para ambos jugadores (defecto: 10x10).
+        """
+        self.session_id = session_id
+        self.game = Game(board_size)
+        self.players: Dict[str, dict] = {}  # {player_id: {'socket': socket, 'name': str, 'connected': bool}}
+        
+        # Lock para evitar race conditions en place_ships
+        self.ships_placement_lock = threading.Lock()
+        
+        # Información de reconexión
+        self.disconnected_player: Optional[str] = None
+        self.reconnect_timeout: Optional[datetime] = None
+        
+        # Timestamps
         self.created_at = datetime.now()
-        self.last_activity = datetime.now()
-        self.timeout = timedelta(minutes=30)
-        self.game_state = GameState.WAITING_FOR_PLAYERS
+        self.started_at: Optional[datetime] = None
+        self.finished_at: Optional[datetime] = None
+        self.last_activity_at: datetime = datetime.now()
+        self.is_active = True
+        
+        logger.info(f"[SESSION {self.session_id}] Sesión créada (reconexión timeout: {ServerConfig().TIMEOUT_RECONNECTION}s)")
 
-    def add_player(self, player_id: str, player_name: str, client_socket: socket.socket) -> bool:
-        """Añade un jugador a la sesión."""
-        if self.game_state != GameState.WAITING_FOR_PLAYERS:
-            print(f"Intento de unirse a partida {self.game_id} que no está esperando jugadores")
-            return False
+    # ============================================================
+    # MANEJO DE JUGADORES
+    # ============================================================
 
+    def add_player(self, player_id: str, player_name: str, client_socket: socket.socket) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Añade un jugador a la sesión y genera los mensajes correspondientes.
+        
+        Cuando se añade el primer jugador, notifica que se está esperando oponente.
+        Cuando se añade el segundo jugador, notifica a ambos que pueden comenzar a colocar barcos.
+        
+        Args:
+            player_id: ID único del jugador a añadir.
+            player_name: Nombre del jugador (visible para otros).
+            client_socket: Socket del cliente para enviar/recibir mensajes.
+        
+        Returns:
+            Tupla (éxito: bool, mensajes: List[OutgoingMessage]). 
+            éxito es False si la sesión está llena o hay error.
+        """
         if len(self.players) >= 2:
-            return False
+            logger.warning(f"[SESSION {self.session_id}] Intento de añadir jugador pero sesión está llena")
+            return False, []
 
-        self.players[player_id] = {
-            'name': player_name,
-            'socket': client_socket,
-            'ready': False,
-        }
-        if len(self.players) == 2:
-            self.game_state = GameState.PLACING_SHIPS
-            print("Partida con dos jugadores listos, pasando al modo colocación de barcos")
-        return True
+        try:
+            self.game.add_player(player_id)
+            self.players[player_id] = {
+                'socket': client_socket,
+                'name': player_name,
+                'connected': True
+            }
+            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} ({player_name}) añadido")
+            
+            messages: List[OutgoingMessage] = []
+            
+            # Primer jugador: esperando oponente
+            if len(self.players) == 1:
+                msg = OutgoingMessage(
+                    player_id,
+                    {
+                        'type': 'game_state',
+                        'code': 210,  # WAITING_FOR_OPPONENT
+                        'gameId': self.session_id,
+                        'playerId': player_id,
+                        'state': self.game.state.name,
+                        'playerCount': 1,
+                        'message': 'Esperando al oponente...'
+                    }
+                )
+                messages.append(msg)
+            
+            # Segundo jugador: ambos listos
+            elif len(self.players) == 2:
+                for pid, player_info in self.players.items():
+                    other_player_id = self._get_other_player(pid)
+                    other_player_name = self.players[other_player_id]['name'] if other_player_id else 'Desconocido'
+                    msg = OutgoingMessage(
+                        pid,
+                        {
+                            'type': 'game_state',
+                            'code': 211,  # BOTH_PLAYERS_READY
+                            'gameId': self.session_id,
+                            'playerId': pid,
+                            'playerName': player_info['name'],
+                            'opponentName': other_player_name,
+                            'state': self.game.state.name,
+                            'playerCount': 2,
+                            'players': {p_id: self.players[p_id]['name'] for p_id in self.players},
+                            'message': 'Ambos jugadores listos. Coloquen sus barcos.'
+                        }
+                    )
+                    messages.append(msg)
+            
+            return True, messages
+            
+        except Exception as e:
+            logger.error(f"[SESSION {self.session_id}] Error al añadir jugador: {e}")
+            return False, []
 
-    def get_opponent_id(self, player_id: str) -> Optional[str]:
-        """Obtiene el ID del oponente."""
+    def place_ships(self, player_id: str, ships_data: list) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Coloca barcos para un jugador y genera mensajes de confirmación.
+        
+        Si ambos jugadores colocaron barcos, inicia el juego inmediatamente.
+        Si solo uno colocó, notifica al jugador que espere al oponente.
+        
+        Args:
+            player_id: ID del jugador que está colocando los barcos.
+            ships_data: Lista de diccionarios con datos de los barcos 
+                       (type, positions, orientation).
+        
+        Returns:
+            Tupla (éxito: bool, mensajes: List[OutgoingMessage]).
+            éxito es False si hay error en la colocación de barcos.
+        """
+        # Lock para evitar condiciones de carrera si P1 y P2 colocan casi simultáneamente
+        with self.ships_placement_lock:
+            try:
+                # Convertir datos de entrada a objetos Ship
+                ships = []
+                for ship_data in ships_data:
+                    orientation = ShipOrientation[ship_data['orientation'].upper()]
+                    ship_type = ShipType[ship_data['type']]
+                    ship_id = player_id[:8] + "_" + str(ship_type.name)
+                    positions = [
+                        Coordinate(
+                            x=coord['x'],
+                            y=coord['y']
+                        )
+                        for coord in ship_data['positions']
+                    ]
+                    if orientation == ShipOrientation.HORIZONTAL:
+                        positions.sort(key=lambda c: c.y)
+                    else:  # VERTICAL
+                        positions.sort(key=lambda c: c.x)
+                    
+                    ship = Ship(
+                        ship_id=ship_id,
+                        ship_type=ship_type,
+                        positions=positions,
+                        orientation=orientation
+                    )
+                    ships.append(ship)
+                
+                # Colocar barcos en el juego
+                for ship in ships:
+                    print(f"Placing ship {ship.ship_type.name} at positions: {ship.positions} with orientation {ship._orientation.name}")
+                    self.game.place_ship(player_id, ship)
+                
+                logger.info(f"[SESSION {self.session_id}] Jugador {player_id} colocó {len(ships)} barcos")
+                logger.info(f"[SESSION {self.session_id}] Jugadores en sesión: {list(self.players.keys())}")
+                
+                messages: List[OutgoingMessage] = []
+                
+                # Verificar si ambos jugadores colocaron barcos
+                all_placed = self.game.all_ships_placed()
+                logger.info(f"[SESSION {self.session_id}] all_ships_placed() = {all_placed}")
+                
+                if all_placed:
+                    # Iniciar juego
+                    self.game.finish_ship_placement()
+                    self.started_at = datetime.now()
+                    logger.info(f"[SESSION {self.session_id}] Ambos jugadores listos, juego iniciado")
+                    
+                    current_turn = self.game.current_turn
+                    logger.info(f"[SESSION {self.session_id}] Juego iniciado. Turno inicial: {current_turn}")
+                    
+                    # === PASO 1: Enviar game_state 212 (GAME_STARTED) a ambos ===
+                    for pid in self.players:
+                        other_player_id = self._get_other_player(pid)
+                        if other_player_id not in self.players:
+                            continue
+                        
+                        other_player_name = self.players[other_player_id]['name']
+                        msg = OutgoingMessage(
+                            pid,
+                            {
+                                'type': 'game_state',
+                                'code': 212,  # GAME_STARTED
+                                'gameId': self.session_id,
+                                'playerId': pid,
+                                'playerName': self.players[pid]['name'],
+                                'opponentName': other_player_name,
+                                'state': self.game.state.name,
+                                'message': '¡Juego iniciado!'
+                            }
+                        )
+                        messages.append(msg)
+                        logger.info(f"[SESSION {self.session_id}] Mensaje 212 (GAME_STARTED) enviado a {pid}")
+                    
+                    # === PASO 2: Enviar game_state 215/216 para asignar turno inicial ===
+                    for pid in self.players:
+                        other_player_id = self._get_other_player(pid)
+                        if other_player_id not in self.players:
+                            continue
+                        
+                        other_player_name = self.players[other_player_id]['name']
+                        is_your_turn = (pid == current_turn)
+                        code = 215 if is_your_turn else 216  # 215 = YOUR_TURN, 216 = WAITING
+                        
+                        msg = OutgoingMessage(
+                            pid,
+                            {
+                                'type': 'game_state',
+                                'code': code,
+                                'gameId': self.session_id,
+                                'playerId': pid,
+                                'playerName': self.players[pid]['name'],
+                                'opponentName': other_player_name,
+                                'state': self.game.state.name,
+                                'currentTurn': current_turn,
+                                'yourTurn': is_your_turn,
+                                'message': '¡Es tu turno!' if is_your_turn else 'Esperando a tu oponente...'
+                            }
+                        )
+                        messages.append(msg)
+                        logger.info(f"[SESSION {self.session_id}] Mensaje {code} enviado a {pid}")
+                else:
+                    # Solo un jugador colocó, esperar al otro
+                    other_player_id = self._get_other_player(player_id)
+                    if other_player_id:  # Verificar que existe otro jugador
+                        other_player_name = self.players[other_player_id]['name']
+                        msg = OutgoingMessage(
+                            player_id,
+                            {
+                                'type': 'game_state',
+                                'code': 213,  # WAITING_FOR_SHIPS
+                                'gameId': self.session_id,
+                                'playerId': player_id,
+                                'playerName': self.players[player_id]['name'],
+                                'opponentName': other_player_name,
+                                'message': 'Barcos colocados. Esperando al oponente...'
+                            }
+                        )
+                        messages.append(msg)
+                        logger.info(f"[SESSION {self.session_id}] {player_id} colocó barcos, esperando a {other_player_id}")
+                
+                return True, messages
+                
+            except Exception as e:
+                logger.error(f"[SESSION {self.session_id}] Error al colocar barcos: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return False, []
+
+    # ============================================================
+    # LÓGICA DE ATAQUE
+    # ============================================================
+
+    def execute_attack(self, attacker_id: str, coordinate_dict: dict) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Ejecuta un ataque y genera todos los mensajes correspondientes.
+        
+        Procesa el ataque, actualiza el estado del juego, y genera los siguientes mensajes:
+        - Respuesta al atacante (resultado del ataque)
+        - Notificación al defensor (recibió ataque)
+        - Cambio de turno (a ambos jugadores)
+        - Fin de juego (si aplica, con ganador/perdedor)
+        
+        Args:
+            attacker_id: ID del jugador que ataca.
+            coordinate_dict: Diccionario con coordenadas del ataque {'x': int, 'y': int}.
+        
+        Returns:
+            Tupla (éxito: bool, mensajes: List[OutgoingMessage]).
+            éxito es False si el ataque es inválido.
+        """
+        try:
+            # Validar coordenada y ejecutar ataque
+            coord = Coordinate(x=coordinate_dict['x'], y=coordinate_dict['y'])
+            result = self.game.attack(attacker_id, coord)
+            
+            defender_id = result.defender_id
+            logger.info(
+                f"[SESSION {self.session_id}] Ataque de {attacker_id} a ({coord.x}, {coord.y}): {result.outcome.name}"
+            )
+            
+            messages: List[OutgoingMessage] = []
+            
+            # =====================================================================
+            # MENSAJE 1: attack_result al ATACANTE
+            # =====================================================================
+            defender_name = self.players[defender_id]['name'] if defender_id in self.players else 'Desconocido'
+            
+            attack_result_msg = OutgoingMessage(
+                attacker_id,
+                {
+                    'type': 'attack_result',
+                    'code': 217,  # ATTACK_REGISTERED
+                    'gameId': self.session_id,
+                    'playerId': attacker_id,
+                    'outcome': result.outcome.name,  # HIT, MISS, SHIP_SUNK, etc
+                    'x': coord.x,
+                    'y': coord.y,
+                    'shipSunk': result.ship_sunk,
+                    'message': f"Ataque a ({coord.x}, {coord.y}) - {result.outcome.name}"
+                }
+            )
+            messages.append(attack_result_msg)
+            logger.debug(f"[SESSION {self.session_id}] attack_result enviado a {attacker_id}")
+            
+            # =====================================================================
+            # MENSAJE 2: opponent_attack al DEFENSOR
+            # =====================================================================
+            if defender_id in self.players:
+                attacker_name = self.players[attacker_id]['name']
+                
+                opponent_attack_msg = OutgoingMessage(
+                    defender_id,
+                    {
+                        'type': 'opponent_attack',
+                        'code': 217,  # ATTACK_REGISTERED
+                        'gameId': self.session_id,
+                        'playerId': defender_id,
+                        'outcome': result.outcome.name,  # HIT, MISS, SHIP_SUNK, etc
+                        'x': coord.x,
+                        'y': coord.y,
+                        'shipSunk': result.ship_sunk,
+                        'opponentName': attacker_name,
+                        'message': f"{attacker_name} atacó en ({coord.x}, {coord.y}) - {result.outcome.name}"
+                    }
+                )
+                messages.append(opponent_attack_msg)
+                logger.debug(f"[SESSION {self.session_id}] opponent_attack enviado a {defender_id}")
+            
+            # =====================================================================
+            # MENSAJE 3: game_state 220 (GAME_OVER) o 215/216 (TURN_CHANGE)
+            # =====================================================================
+            if result.game_finished:
+                # Juego terminado - enviar code 220 a ambos
+                winner_id = self.game.winner
+                self.finished_at = datetime.now()
+                logger.info(f"[SESSION {self.session_id}] ¡Juego terminado! Ganador: {winner_id}")
+                
+                for pid in self.players:
+                    other_id = self._get_other_player(pid)
+                    other_name = self.players[other_id]['name'] if other_id else 'Desconocido'
+                    
+                    winner_name = self.players[winner_id]['name'] if winner_id and winner_id in self.players else 'Desconocido'
+                    
+                    game_over_msg = OutgoingMessage(
+                        pid,
+                        {
+                            'type': 'game_state',
+                            'code': 220,  # GAME_OVER
+                            'gameId': self.session_id,
+                            'playerId': pid,
+                            'playerName': self.players[pid]['name'],
+                            'opponentName': other_name,
+                            'winner': winner_id,
+                            'state': 'FINISHED',
+                            'message': f"¡Game Over! Ganador: {winner_name}"
+                        }
+                    )
+                    messages.append(game_over_msg)
+                    logger.debug(f"[SESSION {self.session_id}] game_state 220 enviado a {pid}")
+            else:
+                # Cambiar turno - enviar code 215/216 a ambos
+                current_turn = self.game.current_turn
+                logger.debug(f"[SESSION {self.session_id}] Turno cambiado a: {current_turn}")
+                
+                for pid in self.players:
+                    other_id = self._get_other_player(pid)
+                    other_name = self.players[other_id]['name'] if other_id else 'Desconocido'
+                    is_your_turn = (pid == current_turn)
+                    code = 215 if is_your_turn else 216  # 215 = YOUR_TURN, 216 = WAITING
+                    
+                    turn_msg = OutgoingMessage(
+                        pid,
+                        {
+                            'type': 'game_state',
+                            'code': code,
+                            'gameId': self.session_id,
+                            'playerId': pid,
+                            'playerName': self.players[pid]['name'],
+                            'opponentName': other_name,
+                            'currentTurn': current_turn,
+                            'yourTurn': is_your_turn,
+                            'state': 'IN_PROGRESS',
+                            'message': '¡Es tu turno!' if is_your_turn else 'Esperando al oponente...'
+                        }
+                    )
+                    messages.append(turn_msg)
+                    logger.debug(f"[SESSION {self.session_id}] game_state {code} enviado a {pid}")
+            
+            return True, messages
+            
+        except Exception as e:
+            logger.error(f"[SESSION {self.session_id}] Error en ataque: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False, [OutgoingMessage(attacker_id, {
+                'type': 'error',
+                'code': 440,
+                'message': f"Error en ataque: {str(e)}"
+            })]
+
+    # ============================================================
+    # RENDICIÓN
+    # ============================================================
+
+    def handle_surrender(self, player_id: str) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Maneja la rendición de un jugador.
+        
+        Finaliza inmediatamente el juego, dando la victoria al otro jugador,
+        y genera mensajes de fin de juego para ambos.
+        
+        Args:
+            player_id: ID del jugador que se rinde.
+        
+        Returns:
+            Tupla (éxito: bool, mensajes: List[OutgoingMessage]).
+        """
+        try:
+            # El otro jugador gana
+            winner_id = self._get_other_player(player_id)
+            self.game._state = GameState.FINISHED
+            self.game._winner = winner_id
+            self.finished_at = datetime.now()
+            
+            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} se rindió")
+            
+            messages: List[OutgoingMessage] = []
+            
+            for pid in self.players:
+                other_id = self._get_other_player(pid)
+                other_name = self.players[other_id]['name'] if other_id else 'Desconocido'
+                game_over_payload = {
+                    'type': 'game_over',
+                    'code': 220,
+                    'gameId': self.session_id,
+                    'playerId': pid,
+                    'playerName': self.players[pid]['name'],
+                    'opponentName': other_name,
+                    'winner': winner_id,
+                    'isWinner': (pid == winner_id),
+                    'reason': 'surrender',
+                    'message': 'Juego finalizado'
+                }
+                messages.append(OutgoingMessage(pid, game_over_payload))
+            
+            return True, messages
+            
+        except Exception as e:
+            logger.error(f"[SESSION {self.session_id}] Error en rendición: {e}")
+            return False, []
+
+    # ============================================================
+    # RECONEXIÓN
+    # ============================================================
+
+    def reconnect_player(self, player_id: str, client_socket: socket.socket) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Reconecta un jugador después de una desconexión.
+        
+        Actualiza el socket del jugador, marca como reconectado, y genera mensajes
+        de confirmación de reconexión y notificación al oponente.
+        
+        Args:
+            player_id: ID del jugador que se reconecta.
+            client_socket: Nuevo socket del cliente.
+        
+        Returns:
+            Tupla (éxito: bool, mensajes: List[OutgoingMessage]).
+            éxito es False si el jugador no estaba en la sesión.
+        """
+        try:
+            if player_id not in self.players:
+                return False, []
+            
+            self.players[player_id]['socket'] = client_socket
+            self.players[player_id]['connected'] = True
+            self.disconnected_player = None
+            self.reconnect_timeout = None
+            
+            logger.info(f"[SESSION {self.session_id}] Jugador {player_id} reconectado")
+            
+            messages: List[OutgoingMessage] = []
+            
+            # Enviar estado actual del juego al que se reconecta
+            game_state = self.game.get_public_state_for(player_id)
+            other_pid = self._get_other_player(player_id)
+            other_name = self.players[other_pid]['name'] if other_pid else 'Desconocido'
+            reconnect_msg = OutgoingMessage(
+                player_id,
+                {
+                    'type': 'game_state',
+                    'code': 231,  # RECONNECT_SUCCESS
+                    'gameId': self.session_id,
+                    'playerId': player_id,
+                    'playerName': self.players[player_id]['name'],
+                    'opponentName': other_name,
+                    'state': game_state,
+                    'message': 'Reconectado exitosamente'
+                }
+            )
+            messages.append(reconnect_msg)
+            
+            # Notificar al otro jugador
+            if other_pid:
+                notification = OutgoingMessage(
+                    other_pid,
+                    {
+                        'type': 'notification',
+                        'code': 231,
+                        'gameId': self.session_id,
+                        'message': 'Tu oponente se reconectó'
+                    }
+                )
+                messages.append(notification)
+            
+            return True, messages
+            
+        except Exception as e:
+            logger.error(f"[SESSION {self.session_id}] Error en reconexión: {e}")
+            return False, []
+
+    def mark_player_disconnected(self, player_id: str) -> List[OutgoingMessage]:
+        """
+        Marca un jugador como desconectado e inicia un timer configurable.
+        
+        Si el jugador no se reconecta dentro del TIMEOUT_RECONNECTION configurado,
+        la sesión terminará dando la victoria al otro jugador.
+        
+        Args:
+            player_id: ID del jugador que se desconectó.
+        
+        Returns:
+            Lista de mensajes a enviar (notificación al otro jugador).
+        """
+        if player_id in self.players:
+            self.players[player_id]['connected'] = False
+            self.disconnected_player = player_id
+            
+            # Usar timeout configurable desde ServerConfig
+            timeout_seconds = int(ServerConfig().TIMEOUT_RECONNECTION)
+            self.reconnect_timeout = datetime.now() + timedelta(seconds=timeout_seconds)
+            
+            logger.warning(
+                f"[SESSION {self.session_id}] Jugador {player_id} desconectado. "
+                f"Timer: {timeout_seconds}s"
+            )
+            
+            messages: List[OutgoingMessage] = []
+            
+            # Notificar al otro jugador
+            other_id = self._get_other_player(player_id)
+            if other_id:
+                notification = OutgoingMessage(
+                    other_id,
+                    {
+                        'type': 'notification',
+                        'code': 450,  # OPPONENT_DISCONNECTED
+                        'gameId': self.session_id,
+                        'message': f'Tu oponente se desconectó. Esperando reconexión ({timeout_seconds}s)...'
+                    }
+                )
+                messages.append(notification)
+            
+            return messages
+        
+        return []
+
+    def check_reconnection_timeout(self) -> Tuple[bool, List[OutgoingMessage]]:
+        """
+        Verifica si el timer de reconexión ha expirado.
+        
+        Si ha expirado, finaliza el juego de forma inmediata dando victoria
+        al jugador conectado, y retorna mensajes de fin de juego para ambos.
+        
+        El cliente que se desconectó recibirá un mensaje especial indicándole
+        que debe limpiar sus datos (localStorage, sessionStorage).
+        
+        Returns:
+            Tupla (session_should_close: bool, mensajes: List[OutgoingMessage])
+            True si la sesión debe cerrarse después de enviar los mensajes.
+        """
+        if not self.disconnected_player or not self.reconnect_timeout:
+            return False, []
+
+        if datetime.now() > self.reconnect_timeout:
+            winner_id = self._get_other_player(self.disconnected_player)
+            loser_id = self.disconnected_player
+            
+            logger.warning(
+                f"[SESSION {self.session_id}] Reconexión expirada. "
+                f"{winner_id} gana por timeout de reconexión."
+            )
+            
+            self.game._state = GameState.FINISHED
+            self.game._winner = winner_id
+            self.is_active = False
+            self.finished_at = datetime.now()
+            
+            messages: List[OutgoingMessage] = []
+            
+            # Mensaje para el ganador (jugador conectado)
+            if winner_id and self.players[winner_id]['connected']:
+                game_over_payload = {
+                    'type': 'game_over',
+                    'code': 220,
+                    'gameId': self.session_id,
+                    'playerId': winner_id,
+                    'winner': winner_id,
+                    'isWinner': True,
+                    'reason': 'opponent_timeout',
+                    'message': 'Ganaste por timeout del oponente'
+                }
+                messages.append(OutgoingMessage(winner_id, game_over_payload))
+            
+            # Mensaje especial para el que se quedó desconectado
+            # Se envía cuando intente reconectar, pero lo detectará cuando valide la sesión
+            disconnected_msg = {
+                'type': 'game_over',
+                'code': 220,
+                'gameId': self.session_id,
+                'playerId': loser_id,
+                'winner': winner_id,
+                'isWinner': False,
+                'reason': 'reconnect_timeout',
+                'message': 'Perdiste por no reconectarte a tiempo',
+                'clearSession': True  # Señal especial para el cliente
+            }
+            messages.append(OutgoingMessage(loser_id, disconnected_msg))
+            
+            return True, messages  # True = la sesión debe cerrarse
+        
+        return False, []  # False = sesión sigue activa
+
+    # ============================================================
+    # UTILIDADES
+    # ============================================================
+
+    def _get_other_player(self, player_id: str) -> Optional[str]:
+        """
+        Obtiene el ID del otro jugador en la sesión.
+        
+        Args:
+            player_id: ID de un jugador en la sesión.
+        
+        Returns:
+            ID del otro jugador, o None si solo hay un jugador.
+        """
         for pid in self.players:
             if pid != player_id:
                 return pid
         return None
 
-    def is_active(self) -> bool:
-        """Verifica si la sesión sigue activa."""
-        return datetime.now() - self.last_activity < self.timeout
+    def is_full(self) -> bool:
+        """
+        Verifica si hay dos jugadores conectados en la sesión.
+        
+        Returns:
+            True si hay 2 jugadores conectados, False en caso contrario.
+        """
+        return len([p for p in self.players.values() if p['connected']]) >= 2
 
+    def is_game_in_progress(self) -> bool:
+        """
+        Verifica si el juego está actualmente en progreso.
+        
+        Returns:
+            True si el estado del juego es IN_PROGRESS, False en caso contrario.
+        """
+        return self.game.state == GameState.IN_PROGRESS
+
+    def is_game_finished(self) -> bool:
+        """
+        Verifica si el juego ha terminado.
+        
+        Returns:
+            True si el estado del juego es FINISHED, False en caso contrario.
+        """
+        return self.game.state == GameState.FINISHED
+
+    def __repr__(self) -> str:
+        return f"GameSession({self.session_id}, players={len(self.players)}, state={self.game.state.name})"
+
+
+# ============================================================
+# BATALLANAVALSERVER - COORDINADOR DE CONEXIONES
+# ============================================================
 
 class BatallaNavalServer:
-    """Servidor principal de Batalla Naval."""
+    """
+    Servidor de WebSocket que coordina múltiples GameSessions de forma concurrente.
+    
+    Responsabilidad principal: Aceptar conexiones WebSocket, validar mensajes y 
+    enviar respuestas. NO maneja la lógica de juego, solo la lógica de red.
+    La lógica de juego se delega a instancias de GameSession.
+    
+    Flujo de arquitectura:
+    1. Cliente conecta → BatallaNavalServer establece WebSocket
+    2. Cliente envía mensaje → BatallaNavalServer valida y parsea
+    3. BatallaNavalServer delega a GameSession apropiada
+    4. GameSession genera mensajes (qué y para quién)
+    5. BatallaNavalServer envía mensajes a clientes (cómo)
+    """
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 8080):
+    def __init__(self, host: str = '0.0.0.0', port: int = 8080):
+        """
+        Inicializa el servidor de WebSocket.
+        
+        Args:
+            host: Dirección IP a la que se une el servidor (defecto: 0.0.0.0 = todas las interfaces).
+            port: Puerto TCP en el que escucha (defecto: 8080).
+        """
         self.host = host
         self.port = port
         self.protocol = Protocol()
         
-        # Diccionarios de estado
-        self.sessions: Dict[str, GameSession] = {}  # {game_id: GameSession}
-        self.player_sessions: Dict[str, str] = {}   # {player_id: game_id}
-        self.player_sockets: Dict[socket.socket, str] = {}  # {socket: player_id}
+        self.sessions: Dict[str, GameSession] = {}
+        self.player_to_session: Dict[str, str] = {}
+        self.socket_to_player: Dict[socket.socket, str] = {}
+        self.socket_to_session: Dict[socket.socket, str] = {}
         
-        # Contador para IDs
-        self.next_game_id = 0
-        self.next_player_id = 0
-        
-        # Socket del servidor
         self.server_socket = None
         self.running = False
-        self.client_threads = {}
+        
+        # Thread de limpieza automática
+        self.cleanup_thread = None
+        self.cleanup_running = False
+
 
     def start(self):
+        """
+        Inicia el servidor WebSocket y comienza a aceptar conexiones.
+        
+        Establece un socket TCP listening, acepta conexiones de clientes,
+        realiza handshake WebSocket, y maneja toda la comunicación
+        con cada cliente en un thread separado.
+        
+        También inicia un thread de limpieza automática para verificar
+        timeouts de reconexión y sesiones inactivas.
+        
+        Para detener el servidor, establecer self.running = False o usar Ctrl+C.
+        """
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(5)
-            
-            # --- SOLUCIÓN: Timeout de 1 segundo ---
-            self.server_socket.settimeout(10.0) 
+            self.server_socket.settimeout(150.0)
             
             self.running = True
+            
+            # Iniciar thread de limpieza automática
+            self.cleanup_running = True
+            self.cleanup_thread = threading.Thread(
+                target=self._cleanup_loop,
+                daemon=True,
+                name="Cleanup-Thread"
+            )
+            self.cleanup_thread.start()
+            
             logger.info(f"Servidor iniciado en {self.host}:{self.port}")
+            logger.info(f"Thread de limpieza iniciado (intervalo: {int(ServerConfig().CLEANUP_CHECK_INTERVAL)}s)")
             
             while self.running:
                 try:
                     client_socket, client_address = self.server_socket.accept()
-                    logger.info(f"Conexión solicitada desde {client_address}")
+                    logger.info(f"Conexión desde {client_address}")
                     
                     thread = threading.Thread(
                         target=self._handle_client,
@@ -117,8 +859,6 @@ class BatallaNavalServer:
                     thread.start()
                     
                 except socket.timeout:
-                    # Esto ocurre cada 1 segundo, permitiendo verificar self.running
-                    # y capturar el Ctrl+C
                     continue
                 except Exception as e:
                     if self.running:
@@ -127,37 +867,161 @@ class BatallaNavalServer:
         except KeyboardInterrupt:
             logger.info("Interrupción detectada (Ctrl+C)")
         except Exception as e:
-            logger.error(f"Error iniciando servidor: {e}")
+            logger.error(f"Error en servidor: {e}")
         finally:
             self.stop()
 
     def stop(self):
-        """Detiene el servidor."""
-        if not self.running:
-            return
+        """
+        Detiene el servidor y cierra todas las conexiones abiertas.
+        
+        Establece running = False, cierra el socket del servidor,
+        detiene el thread de limpieza, e impide que acepte nuevas conexiones.
+        """
+        logger.info("Deteniendo servidor...")
         self.running = False
+        self.cleanup_running = False
+        
         if self.server_socket:
             try:
                 self.server_socket.close()
-            except Exception as e:
-                logger.error(f"Error al cerrar socket: {e}")
+            except:
+                pass
+        
+        # Esperar a que el thread de limpieza se detenga
+        if self.cleanup_thread:
+            try:
+                self.cleanup_thread.join(timeout=5)
+            except:
+                pass
+        
         logger.info("Servidor detenido")
 
+    # ============================================================
+    # LIMPIEZA AUTOMÁTICA DE SESIONES
+    # ============================================================
+
+    def _cleanup_loop(self):
+        """
+        Loop de limpieza que se ejecuta periódicamente en un thread separado.
+        
+        Verifica:
+        1. Timeouts de reconexión de jugadores desconectados
+        2. Sesiones inactivas que deben cerrarse
+        
+        Ejecuta continuamente cada CLEANUP_CHECK_INTERVAL segundos.
+        """
+        
+        while self.cleanup_running:
+            try:
+                import time
+                time.sleep(int(ServerConfig().CLEANUP_CHECK_INTERVAL))
+                
+                if not self.cleanup_running:
+                    break
+                
+                # Verificar todos los juegos activos
+                sessions_to_remove = []
+                for session_id, session in list(self.sessions.items()):
+                    # 1. Verificar timeout de reconexión
+                    should_close, messages = session.check_reconnection_timeout()
+                    
+                    if should_close:
+                        logger.warning(
+                            f"[SESSION {session_id}] Cerrando sesión por timeout de reconexión"
+                        )
+                        # Enviar mensajes pendientes
+                        self._send_messages(session, messages)
+                        sessions_to_remove.append(session_id)
+                    
+                    elif messages:
+                        # Enviar mensajes pendientes (aunque no se cierre la sesión)
+                        self._send_messages(session, messages)
+                    
+                    # 2. Verificar sesiones inactivas (nunca conectadas)
+                    now = datetime.now()
+                    time_since_creation = (now - session.created_at).total_seconds()
+                    
+                    # Si ha pasado el timeout y no se conectó el segundo jugador
+                    if (len(session.players) == 1 and 
+                        time_since_creation > int(ServerConfig().TIMEOUT_WAITING_FOR_OPPONENT)):
+                        logger.warning(
+                            f"[SESSION {session_id}] Cerrando por timeout de espera de oponente "
+                            f"({time_since_creation}s)"
+                        )
+                        sessions_to_remove.append(session_id)
+                
+                # Remover sesiones cerradas
+                for session_id in sessions_to_remove:
+                    self._remove_session(session_id)
+                    
+            except Exception as e:
+                logger.error(f"Error en cleanup_loop: {e}")
+
+    def _remove_session(self, session_id: str):
+        """
+        Elimina una sesión completamente del servidor.
+        
+        Limpia mapeos, cierra conexiones y registra el evento.
+        
+        Args:
+            session_id: ID de la sesión a eliminar.
+        """
+        if session_id not in self.sessions:
+            return
+        
+        session = self.sessions[session_id]
+        
+        # Limpiar mapeos de jugadores
+        for player_id in session.players:
+            if player_id in self.player_to_session:
+                del self.player_to_session[player_id]
+        
+        # Limpiar mapeos de sockets
+        sockets_to_remove = []
+        for sock, pid in list(self.socket_to_player.items()):
+            if pid in session.players:
+                sockets_to_remove.append(sock)
+        
+        for sock in sockets_to_remove:
+            if sock in self.socket_to_player:
+                del self.socket_to_player[sock]
+            if sock in self.socket_to_session:
+                del self.socket_to_session[sock]
+        
+        # Eliminar sesión
+        del self.sessions[session_id]
+        
+        logger.info(f"[SESSION {session_id}] Sesión eliminada del servidor")
+
+    # ============================================================
+    # MANEJO DE CLIENTE
+    # ============================================================
+
     def _handle_client(self, client_socket: socket.socket, client_address: Tuple):
-        """Maneja a un cliente conectado."""
+        """
+        Maneja la comunicación completa con un cliente en un thread separado.
+        
+        Realiza el handshake WebSocket, recibe mensajes en bucle,
+        valida y procesa cada mensaje según su tipo, y se dispone
+        de limpieza cuando el cliente se desconecta.
+        
+        Args:
+            client_socket: Socket TCP conectado al cliente.
+            client_address: Tupla (host, puerto) de la conexión.
+        """
         player_id = None
+        session_id = None
         
         try:
-            # WebSocket handshake
             request = client_socket.recv(4096).decode('utf-8')
             if not self._websocket_handshake(client_socket, request):
-                logger.warning(f"Handshake fallido desde el pelotudo de {client_address}")
+                logger.warning(f"Handshake fallido desde {client_address}")
                 client_socket.close()
                 return
 
             logger.info(f"WebSocket establecido con {client_address}")
             
-            # Loop principal de recepción de mensajes
             while self.running:
                 frame = self._receive_websocket_frame(client_socket)
                 if not frame:
@@ -174,33 +1038,415 @@ class BatallaNavalServer:
                     msg_type = data.get('type')
                     
                     if msg_type == 'join_game':
-                        player_id = self._handle_join_game(client_socket, data)
+                        player_id, session_id = self._handle_join_game(client_socket, data)
                     elif msg_type == 'reconnect':
-                        player_id = self._handle_reconnect(client_socket, data)
+                        player_id, session_id = self._handle_reconnect(client_socket, data)
                     elif msg_type == 'place_ships':
-                        self._handle_place_ships(client_socket, player_id, data)
+                        self._handle_place_ships(client_socket, player_id, session_id, data)
                     elif msg_type == 'attack':
-                        self._handle_attack(client_socket, player_id, data)
+                        self._handle_attack(client_socket, player_id, session_id, data)
                     elif msg_type == 'surrender':
-                        self._handle_surrender(client_socket, player_id, data)
+                        self._handle_surrender(client_socket, player_id, session_id, data)
                     elif msg_type == 'ping':
-                        self._send_message(client_socket, 'pong', code=200)
+                        self._send_message(client_socket, {'type': 'pong', 'code': 200})
                     else:
-                        self._send_error(client_socket, 400, f"Tipo de mensaje desconocido: {msg_type}")
+                        self._send_error(client_socket, 400, f"Tipo desconocido: {msg_type}")
                         
                 except json.JSONDecodeError:
-                    self._send_error(client_socket, 401, "Mensaje JSON inválido")
+                    self._send_error(client_socket, 401, "JSON inválido")
                 except Exception as e:
                     logger.error(f"Error procesando mensaje: {e}")
-                    self._send_error(client_socket, 500, "Error interno del servidor")
+                    self._send_error(client_socket, 500, "Error interno")
                     
         except Exception as e:
             logger.error(f"Error en cliente {client_address}: {e}")
         finally:
-            self._cleanup_client(client_socket, player_id)
+            self._cleanup_client(client_socket, player_id, session_id)
+
+    # ============================================================
+    # HANDLERS DE MENSAJES
+    # ============================================================
+
+    def _handle_join_game(self, client_socket: socket.socket, data: dict) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Maneja cuando un cliente se une a una partida.
+        
+        Busca una sesión disponible (sin juego completo).
+        Si no la encuentra, crea una nueva.
+        Añade el jugador a la sesión y envía mensajes de confirmación.
+        
+        Args:
+            client_socket: Socket del cliente.
+            data: Diccionario con datos del mensaje (playerId, playerName).
+        
+        Returns:
+            Tupla (player_id: str, session_id: str) o (None, None) si hay error.
+        """
+        try:
+            is_valid, error_msg = self.protocol.validate_join_message(data)
+            if not is_valid:
+                self._send_error(client_socket, 402, error_msg)
+                return None, None
+
+            player_id = str(uuid.uuid4())
+            player_name = data.get('playerName', f"Unknown_{player_id[:5]}")
+            
+            # Buscar sesión disponible
+            available_session = None
+            for sess in self.sessions.values():
+                if not sess.is_full() and sess.game.state == GameState.WAITING_FOR_PLAYERS:
+                    available_session = sess
+                    break
+            
+            # Si no hay, crear una nueva
+            if available_session is None:
+                session_id = str(uuid.uuid4())
+                available_session = GameSession(session_id)
+                self.sessions[session_id] = available_session
+                logger.info(f"Nueva sesión creada: {session_id}")
+            else:
+                session_id = available_session.session_id
+            
+            # Añadir jugador a la sesión
+            success, messages = available_session.add_player(player_id, player_name, client_socket)
+            if not success:
+                self._send_error(client_socket, 422, "No se pudo añadir el jugador")
+                return None, None
+            
+            # Guardar mapeos
+            self.player_to_session[player_id] = session_id
+            self.socket_to_player[client_socket] = player_id
+            self.socket_to_session[client_socket] = session_id
+            
+            # Enviar mensajes generados por GameSession
+            self._send_messages(available_session, messages)
+            
+            return player_id, session_id
+            
+        except Exception as e:
+            logger.error(f"Error en join_game: {e}")
+            self._send_error(client_socket, 500, "Error interno")
+            return None, None
+
+    def _handle_reconnect(self, client_socket: socket.socket, data: dict) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Maneja reconexión de un jugador a una partida en curso.
+        
+        Busca la sesión y al jugador, reconecta a ambos, y envía
+        el estado actual del juego al jugador.
+        
+        Si la sesión no existe o ha expirado su timeout de reconexión,
+        envía al cliente un mensaje especial indicándole que limpie sus datos.
+        
+        Args:
+            client_socket: Socket del cliente.
+            data: Diccionario con datos del mensaje (gameId, playerId).
+        
+        Returns:
+            Tupla (player_id: str, session_id: str) o (None, None) si hay error.
+        """
+        try:
+            is_valid, error_msg = self.protocol.validate_reconnect_message(data)
+            if not is_valid:
+                self._send_error(client_socket, 402, error_msg)
+                return None, None
+
+            player_id = data.get('playerId')
+            session_id = data.get('gameId')
+            
+            if session_id not in self.sessions:
+                # Sesión no existe o fue eliminada por timeout
+                logger.warning(f"Intento de reconexión a sesión inexistente: {session_id}")
+                error_response = {
+                    'type': 'game_over',
+                    'code': 220,
+                    'gameId': session_id,
+                    'playerId': player_id,
+                    'reason': 'session_expired',
+                    'message': 'La sesión ha expirado',
+                    'clearSession': True  # Señal para que el cliente limpie datos
+                }
+                self._send_message(client_socket, error_response)
+                return None, None
+            
+            session = self.sessions[session_id]
+            
+            if player_id not in session.players:
+                logger.warning(
+                    f"Intento de reconexión con jugador inexistente: {player_id} en {session_id}"
+                )
+                error_response = {
+                    'type': 'error',
+                    'code': 410,
+                    'message': 'Jugador no encontrado en la sesión',
+                    'clearSession': True
+                }
+                self._send_message(client_socket, error_response)
+                return None, None
+            
+            # Reconectar
+            success, messages = session.reconnect_player(player_id, client_socket)
+            if not success:
+                self._send_error(client_socket, 420, "Error en reconexión")
+                return None, None
+            
+            # Actualizar mapeos
+            self.socket_to_player[client_socket] = player_id
+            self.socket_to_session[client_socket] = session_id
+            
+            # Enviar mensajes
+            self._send_messages(session, messages)
+            
+            logger.info(f"[SESSION {session_id}] Jugador {player_id} reconectado")
+            return player_id, session_id
+            
+        except Exception as e:
+            logger.error(f"Error en reconnect: {e}")
+            self._send_error(client_socket, 500, "Error interno")
+            return None, None
+
+    def _handle_place_ships(self, client_socket: socket.socket, player_id: Optional[str], 
+                           session_id: Optional[str], data: dict):
+        """
+        Maneja la colocación de barcos de un jugador.
+        
+        Valida el mensaje, delega a la sesión de juego para procesar
+        la colocación, y envía los mensajes generados.
+        
+        Args:
+            client_socket: Socket del cliente.
+            player_id: ID del jugador (puede ser None si no identificado).
+            session_id: ID de la sesión (puede ser None si no identificado).
+            data: Diccionario con datos de los barcos (gameId, playerId, ships).
+        """
+        if not player_id or not session_id:
+            self._send_error(client_socket, 410, "Jugador o partida no identificados")
+            return
+
+        try:
+            is_valid, error_msg = self.protocol.validate_place_ships_message(data)
+            if not is_valid:
+                self._send_error(client_socket, 402, error_msg)
+                return
+
+            if session_id not in self.sessions:
+                self._send_error(client_socket, 420, "Partida no encontrada")
+                return
+
+            session = self.sessions[session_id]
+            ships_data = data.get('ships', [])
+            
+            # GameSession genera los mensajes
+            success, messages = session.place_ships(player_id, ships_data)
+            
+            if not success:
+                self._send_error(client_socket, 430, "Error colocando barcos")
+                return
+            
+            # Enviar mensajes
+            self._send_messages(session, messages)
+            
+        except Exception as e:
+            logger.error(f"Error en place_ships: {e}")
+            self._send_error(client_socket, 500, "Error interno")
+
+    def _handle_attack(self, client_socket: socket.socket, player_id: Optional[str],
+                      session_id: Optional[str], data: dict):
+        """
+        Maneja un ataque de un jugador.
+        
+        Valida el mensaje, ejecuta el ataque en la sesión de juego,
+        y envía los mensajes generados (resultado, turno, fin de juego, etc).
+        
+        Args:
+            client_socket: Socket del cliente.
+            player_id: ID del jugador que ataca (puede ser None si no identificado).
+            session_id: ID de la sesión (puede ser None si no identificado).
+            data: Diccionario con coordenadas del ataque (gameId, playerId, coordinate).
+        """
+        if not player_id or not session_id:
+            self._send_error(client_socket, 410, "Jugador o partida no identificados")
+            return
+
+        try:
+            is_valid, error_msg = self.protocol.validate_attack_message(data)
+            if not is_valid:
+                self._send_error(client_socket, 402, error_msg)
+                return
+
+            if session_id not in self.sessions:
+                self._send_error(client_socket, 420, "Partida no encontrada")
+                return
+
+            session = self.sessions[session_id]
+            coordinate = data.get('coordinate')
+            if not coordinate: return #Solo para evitar que el editor marque error
+            
+            # GameSession genera los mensajes
+            success, messages = session.execute_attack(player_id, coordinate)
+            
+            if not success:
+                self._send_error(client_socket, 440, "Ataque inválido")
+                return
+            
+            # Enviar mensajes
+            self._send_messages(session, messages)
+            
+        except Exception as e:
+            logger.error(f"Error en attack: {e}")
+            self._send_error(client_socket, 500, "Error interno")
+
+    def _handle_surrender(self, client_socket: socket.socket, player_id: Optional[str],
+                         session_id: Optional[str], data: dict):
+        """
+        Maneja la rendición de un jugador.
+        
+        Procesa la rendición a través de la sesión de juego,
+        que finaliza el juego inmediatamente con el otro como ganador.
+        
+        Args:
+            client_socket: Socket del cliente.
+            player_id: ID del jugador que se rinde (puede ser None si no identificado).
+            session_id: ID de la sesión (puede ser None si no identificado).
+            data: Diccionario con datos de la rendición (gameId, playerId).
+        """
+        if not player_id or not session_id:
+            self._send_error(client_socket, 410, "Jugador o partida no identificados")
+            return
+
+        try:
+            if session_id not in self.sessions:
+                self._send_error(client_socket, 420, "Partida no encontrada")
+                return
+
+            session = self.sessions[session_id]
+            
+            # GameSession genera los mensajes
+            success, messages = session.handle_surrender(player_id)
+            
+            if not success:
+                self._send_error(client_socket, 500, "Error en rendición")
+                return
+            
+            # Enviar mensajes
+            self._send_messages(session, messages)
+            
+        except Exception as e:
+            logger.error(f"Error en surrender: {e}")
+            self._send_error(client_socket, 500, "Error interno")
+
+    # ============================================================
+    # ENVÍO DE MENSAJES
+    # ============================================================
+
+    def _send_messages(self, session: GameSession, messages: List[OutgoingMessage]):
+        """
+        Envía una lista de OutgoingMessage a sus respectivos jugadores.
+        
+        Cada OutgoingMessage especifica el player_id destino, se obtiene
+        su socket de la sesión, y se envía el payload al cliente.
+        
+        Args:
+            session: La sesión de juego que contiene los sockets.
+            messages: Lista de OutgoingMessage a enviar.
+        """
+        for msg in messages:
+            if msg.player_id in session.players:
+                sock = session.players[msg.player_id]['socket']
+                self._send_message(sock, msg.payload)
+
+    def _send_message(self, client_socket: socket.socket, message: dict):
+        """
+        Envía un mensaje JSON a través de WebSocket.
+        
+        Serializa el diccionario a JSON, lo encapsula en un frame WebSocket,
+        y lo envía al cliente.
+        
+        Args:
+            client_socket: Socket del cliente destino.
+            message: Diccionario con el mensaje a enviar.
+        """
+        try:
+            json_str = json.dumps(message)
+            frame = self._create_websocket_frame(json_str)
+            client_socket.send(frame)
+        except Exception as e:
+            logger.error(f"Error enviando mensaje: {e}")
+
+    def _send_error(self, client_socket: socket.socket, code: int, message: str):
+        """
+        Envía un mensaje de error al cliente.
+        
+        Formatea el error según el protocolo y lo envía.
+        
+        Args:
+            client_socket: Socket del cliente destino.
+            code: Código de error del protocolo.
+            message: Mensaje descriptivo del error.
+        """
+        error_msg = self.protocol.create_error(code, message)
+        self._send_message(client_socket, error_msg)
+
+    # ============================================================
+    # LIMPIEZA
+    # ============================================================
+
+    def _cleanup_client(self, client_socket: socket.socket, player_id: Optional[str], 
+                       session_id: Optional[str]):
+        """
+        Limpia cuando un cliente se desconecta.
+        
+        Cierra el socket, marca el jugador como desconectado en la sesión,
+        genera mensajes de notificación al oponente, y limpia los mapeos
+        de socket a jugador/sesión.
+        
+        Args:
+            client_socket: Socket del cliente que se desconectó.
+            player_id: ID del jugador (si estaba identificado).
+            session_id: ID de la sesión (si estaba en una).
+        """
+        try:
+            client_socket.close()
+        except:
+            pass
+
+        if player_id and session_id and session_id in self.sessions:
+            session = self.sessions[session_id]
+            
+            # Generar mensajes de desconexión
+            messages = session.mark_player_disconnected(player_id)
+            self._send_messages(session, messages)
+            
+            logger.warning(f"[SESSION {session_id}] Jugador {player_id} desconectado")
+
+        # Limpiar mapeos
+        if client_socket in self.socket_to_player:
+            del self.socket_to_player[client_socket]
+        if client_socket in self.socket_to_session:
+            del self.socket_to_session[client_socket]
+        if player_id and player_id in self.player_to_session:
+            del self.player_to_session[player_id]
+
+    # ============================================================
+    # WEBSOCKET HANDSHAKE Y FRAMES
+    # ============================================================
 
     def _websocket_handshake(self, client_socket: socket.socket, request: str) -> bool:
-        """Realiza el handshake WebSocket."""
+        """
+        Realiza el handshake WebSocket con un cliente.
+        
+        Sigue el protocolo RFC 6455 para establecer una conexión WebSocket:
+        1. Parsea el header HTTP con la clave Sec-WebSocket-Key
+        2. Calcula la aceptación usando SHA1 + Base64
+        3. Envía la respuesta HTTP 101 Switching Protocols
+        
+        Args:
+            client_socket: Socket del cliente.
+            request: La solicitud HTTP inicial del cliente.
+        
+        Returns:
+            True si el handshake fue exitoso, False en caso contrario.
+        """
         try:
             lines = request.split('\r\n')
             headers = {}
@@ -227,548 +1473,149 @@ class BatallaNavalServer:
             )
             client_socket.send(response.encode())
             return True
+            
         except Exception as e:
             logger.error(f"Error en handshake: {e}")
             return False
 
     def _receive_websocket_frame(self, client_socket: socket.socket) -> Optional[str]:
-        """Recibe y decodifica un frame WebSocket."""
+        """
+        Recibe y parsea un WebSocket frame según RFC 6455.
+        
+        Detecta opcodes (texto, binario, cierre, ping),
+        maneja frames enmascarados, extrae y desenmascara el payload.
+        Automáticamente responde a pings con pongs.
+        
+        Args:
+            client_socket: Socket del cliente.
+        
+        Returns:
+            String con el contenido del frame, o None si el cliente cerró/error.
+        """
         try:
-            data = client_socket.recv(4096)
+            data = client_socket.recv(1024)
             if not data:
                 return None
 
-            # Parsear frame WebSocket
             if len(data) < 2:
                 return None
 
-            fin = (data[0] & 0x80) != 0
-            opcode = data[0] & 0x0F
-            masked = (data[1] & 0x80) != 0
-            payload_length = data[1] & 0x7F
-            
-            idx = 2
-            
-            if payload_length == 126:
-                payload_length = int.from_bytes(data[2:4], 'big')
-                idx = 4
-            elif payload_length == 127:
-                payload_length = int.from_bytes(data[2:10], 'big')
-                idx = 10
+            first_byte = data[0]
+            second_byte = data[1]
+            opcode = first_byte & 0x0F
+            masked = (second_byte & 0x80) != 0
+            payload_length = second_byte & 0x7F
+            index = 2
 
-            masking_key = None
-            if masked:
-                masking_key = data[idx:idx+4]
-                idx += 4
-
-            payload = data[idx:idx+payload_length]
-            
-            if masked and masking_key:
-                payload = bytes([payload[i] ^ masking_key[i % 4] for i in range(len(payload))])
-
-            if opcode == 0x1:  # Text frame
-                return payload.decode('utf-8')
-            elif opcode == 0x8:  # Close frame
-                return None
-            
-            return None
-        except Exception as e:
-            logger.error(f"Error recibiendo frame: {e}")
-            return None
-
-    def _send_websocket_frame(self, client_socket: socket.socket, data: str) -> bool:
-        """Envía un frame WebSocket."""
-        try:
-            payload = data.encode('utf-8')
-            frame = bytearray()
-            frame.append(0x81)  # FIN + text frame
-            
-            if len(payload) <= 125:
-                frame.append(len(payload))
-            elif len(payload) <= 65535:
-                frame.append(126)
-                frame.extend(len(payload).to_bytes(2, 'big'))
-            else:
-                frame.append(127)
-                frame.extend(len(payload).to_bytes(8, 'big'))
-            
-            frame.extend(payload)
-            client_socket.send(bytes(frame))
-            return True
-        except Exception as e:
-            logger.error(f"Error enviando frame: {e}")
-            return False
-
-    def _send_message(self, client_socket: socket.socket, msg_type: str, code: int = 200, **kwargs):
-        """Envía un mensaje al cliente."""
-        message = self.protocol.create_message(msg_type, code, **kwargs)
-        self._send_websocket_frame(client_socket, json.dumps(message))
-
-    def _send_error(self, client_socket: socket.socket, code: int, message: str):
-        """Envía un mensaje de error."""
-        error = self.protocol.create_error(code, message)
-        self._send_websocket_frame(client_socket, json.dumps(error))
-
-    def _handle_join_game(self, client_socket: socket.socket, data: Dict) -> Optional[str]:
-        """Maneja solicitud de unirse a una partida."""
-        is_valid, error_msg = self.protocol.validate_join_message(data)
-        if not is_valid:
-            self._send_error(client_socket, 402, error_msg)
-            return None
-
-        player_id = data.get('playerId', f"player_{self.next_player_id}")
-        player_name = data.get('playerName', f"Jugador {self.next_player_id}")
-
-        # Verificar si el jugador ya está en una partida
-        if player_id in self.player_sessions:
-            self._send_error(client_socket, 411, "Jugador ya está en una partida")
-            return None
-
-        # Buscar una partida esperando oponente
-        available_session = None
-        for session in self.sessions.values():
-            if session.game_state == GameState.WAITING_FOR_PLAYERS and len(session.players) == 1:
-                available_session = session
-                break
-
-        # Crear nueva partida o unirse a una existente
-        if available_session is None:
-            game_id = f"game_{self.next_game_id}"
-            self.next_game_id += 1
-            
-            game = Game(board_size=10)
-            session = GameSession(game_id, game)
-            session.add_player(player_id, player_name, client_socket)
-            
-            self.sessions[game_id] = session
-            self.player_sessions[player_id] = game_id
-            self.player_sockets[client_socket] = player_id
-            
-            logger.info(f"Jugador {player_id} creó partida {game_id}")
-            
-            # Enviar confirmación
-            self._send_message(
-                client_socket,
-                'game_state',
-                code=210,
-                gameId=game_id,
-                playerId=player_id,
-                message="Esperando oponente...",
-                gameState="WAITING_FOR_OPPONENT"
-            )
-        else:
-            game_id = available_session.game_id
-            available_session.add_player(player_id, player_name, client_socket)
-            
-            self.player_sessions[player_id] = game_id
-            self.player_sockets[client_socket] = player_id
-            
-            logger.info(f"Jugador {player_id} se unió a partida {game_id}")
-            
-            # Enviar confirmación a ambos jugadores
-            for pid, player_info in available_session.players.items():
-                self._send_message(
-                    player_info['socket'],
-                    'game_state',
-                    code=211,
-                    gameId=game_id,
-                    playerId=pid,
-                    message="¡Oponente encontrado! Coloca tus barcos.",
-                    gameState="PLACING_SHIPS"
-                )
-
-        return player_id
-
-    def _handle_reconnect(self, client_socket: socket.socket, data: Dict) -> Optional[str]:
-        """Maneja reconexión de un jugador."""
-        is_valid, error_msg = self.protocol.validate_reconnect_message(data)
-        if not is_valid:
-            self._send_error(client_socket, 402, error_msg)
-            return None
-
-        game_id = data.get('gameId') or None
-        player_id = data.get('playerId') or None
-        if not game_id or game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return None
-
-        session = self.sessions[game_id]
-        if not player_id or player_id not in session.players:
-            self._send_error(client_socket, 410, "Jugador no encontrado en esa partida")
-            return None
-
-        # Actualizar socket del jugador
-        session.players[player_id]['socket'] = client_socket
-        self.player_sockets[client_socket] = player_id
-        self.player_sessions[player_id] = game_id
-        
-        logger.info(f"Jugador {player_id} reconectado a partida {game_id}")
-        
-        # Enviar estado del juego
-        self._send_game_state(client_socket, game_id, player_id)
-        
-        # Notificar al oponente
-        opponent_id = session.get_opponent_id(player_id)
-        if opponent_id:
-            opponent_socket = session.players[opponent_id]['socket']
-            self._send_message(
-                opponent_socket,
-                'notification',
-                code=231,
-                message=f"{session.players[player_id]['name']} se ha reconectado"
-            )
-
-        return player_id
-
-    def _handle_place_ships(self, client_socket: socket.socket, player_id: Optional[str], data: Dict):
-        """Maneja colocación de barcos."""
-        if not player_id:
-            self._send_error(client_socket, 410, "Jugador no encontrado")
-            return
-
-        is_valid, error_msg = self.protocol.validate_place_ships_message(data)
-        if not is_valid:
-            self._send_error(client_socket, 402, error_msg)
-            return
-
-        game_id = data.get('gameId') or None
-        ships_data = data.get('ships') or None
-
-        if not game_id or game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return
-        
-        if not ships_data:
-            self._send_error(client_socket, 402, "Datos de barcos inválidos")
-            return
-        
-        if len(ships_data) == 0:
-            self._send_error(client_socket, 402, "No se proporcionaron barcos")
-            return
-
-        session = self.sessions[game_id]
-        game = session.game
-
-        try:
-            # Conversión y validación de datos de barcos
-
-            board_size = getattr(game, 'board_size', getattr(game, 'size', None))
-
-            for idx, ship_data in enumerate(ships_data):
-            # Validar estructura mínima
-                if not all(k in ship_data for k in ('start', 'orientation', 'type')):
-                    raise ValueError("Cada barco debe tener 'start', 'orientation' y 'type'")
-
-                start = ship_data['start']
-                sx, sy = int(start['x']), int(start['y'])
-
-                orient_str = str(ship_data['orientation']).lower()
-                if orient_str not in ('horizontal', 'vertical'):
-                    raise ValueError(f"Orientación inválida: {ship_data['orientation']}")
-                orientation = ShipOrientation.HORIZONTAL if orient_str == 'horizontal' else ShipOrientation.VERTICAL
-
-                # Obtener ShipType a partir del dato (soportando tanto nombre como instancia)
-                raw_type = ship_data['type']
-                if isinstance(raw_type, ShipType):
-                    ship_type = raw_type
-                else:
-                    try:
-                    # Intentar coincidencia directa (se espera algo como "DESTROYER" o "destroyer")
-                        ship_type = ShipType[str(raw_type).upper()]
-                    except Exception:
-                        raise ValueError(f"Tipo de barco inválido: {raw_type}")
-
-            length = ship_type.length
-
-            # Construir el conjunto de posiciones del barco
-            positions = set()
-            if orientation == ShipOrientation.HORIZONTAL:
-                positions = {Coordinate(sx + i, sy) for i in range(length)}
-            else:
-                positions = {Coordinate(sx, sy + i) for i in range(length)}
-
-            # Validar que las posiciones estén dentro del tablero (si se conoce tamaño)
-            if board_size is not None:
-                for c in positions:
-                    if c.x < 0 or c.y < 0 or c.x >= board_size or c.y >= board_size:
-                        raise ValueError(f"Barco {ship_type.name} fuera de los límites en {c}")
-
-            ship_id = ship_data.get('id', f"{player_id}_{ship_type.name}_{idx}")
-            ship = Ship(ship_id, ship_type, positions, orientation)
-
-            # Delegar la lógica de colocación al objeto Game (puede validar solapamientos, etc.)
-            game.place_ship(player_id, ship)
-
-            # Marcar al jugador como listo y actualizar actividad
-            session.players[player_id]['ready'] = True
-            session.last_activity = datetime.now()
-
-            # Confirmación al jugador
-            self._send_message(
-            client_socket,
-            'game_state',
-            code=200,
-            gameId=game_id,
-            message="Barcos colocados correctamente"
-            )
-
-            # Si ambos jugadores están listos, iniciar la partida
-            all_ready = all(p['ready'] for p in session.players.values()) and len(session.players) >= 2
-            if all_ready:
-                # Intentar usar API pública del juego para iniciar; si no existe, caer en la asignación directa
+            if not masked:
                 try:
-                    if hasattr(game, 'start') and callable(getattr(game, 'start')):
-                      game.start()
-                    else:
-                        game._state = GameState.IN_PROGRESS
-                except Exception:
-                    # Si start falla, asegurar estado mínimo
-                    game._state = GameState.IN_PROGRESS
-
-            # Determinar primer turno (orden en session.players)
-            player_ids = list(session.players.keys())
-            first_player = player_ids[0] if player_ids else None
-            try:
-                if first_player:
-                    if hasattr(game, 'set_current_turn') and callable(getattr(game, 'set_current_turn')):
-                        game.set_current_turn(first_player)
-                else:
-                    game._current_turn = first_player
-            except Exception:
-                # No crítico; continuar con lo que tengamos
-                pass
-
-            logger.info(f"Partida {game_id} iniciada")
-
-            # Notificar a ambos jugadores del inicio
-            for pid, player_info in session.players.items():
-                is_turn = (pid == getattr(game, 'current_turn', getattr(game, '_current_turn', first_player)))
-                self._send_message(
-                player_info['socket'],
-                'game_state',
-                code=212,
-                gameId=game_id,
-                playerId=pid,
-                message="¡Partida iniciada!" if is_turn else "Tu oponente va primero",
-                gameState="IN_PROGRESS",
-                yourTurn=is_turn
-                )
-
-        except Exception as e:
-            logger.error(f"Error colocando barcos: {e}")
-            self._send_error(client_socket, 430, str(e))
-
-    def _handle_attack(self, client_socket: socket.socket, player_id: Optional[str], data: Dict):
-        """Maneja un ataque."""
-        if not player_id:
-            self._send_error(client_socket, 410, "Jugador no encontrado")
-            return
-
-        is_valid, error_msg = self.protocol.validate_attack_message(data)
-        if not is_valid:
-            self._send_error(client_socket, 402, error_msg)
-            return
-
-        game_id = data.get('gameId') or None
-        coord_data = data.get('coordinate') or None
-        if not game_id or game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return
-        if not coord_data:
-            self._send_error(client_socket, 402, "Coordenada de ataque inválida")
-            return
-        coordinate = Coordinate(coord_data['x'], coord_data['y'])
-
-        if game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return
-
-        session = self.sessions[game_id]
-        game = session.game
-        opponent_id = session.get_opponent_id(player_id)
-
-        try:
-            # Verificar que sea el turno del jugador
-            if game.current_turn != player_id:
-                self._send_error(client_socket, 442, "No es tu turno")
-                return
-
-            # Realizar ataque
-            attack_result = game.attack(player_id, coordinate)
-            outcome = attack_result.outcome
-
-            logger.info(f"Jugador {player_id} atacó {coordinate} en partida {game_id}: {outcome.name}")
-
-            # Preparar respuesta
-            response_data = {
-                'coordinate': {'x': coordinate.x, 'y': coordinate.y},
-                'outcome': outcome.name.lower(),
-                'shipType': attack_result.ship_type.name if attack_result.ship_type else None,
-            }
-
-            # Enviar al atacante
-            self._send_message(
-                client_socket,
-                'attack_result',
-                code=217,
-                gameId=game_id,
-                **response_data
-            )
-
-            # Enviar al oponente
-            if opponent_id:
-                opponent_socket = session.players[opponent_id]['socket']
-                self._send_message(
-                    opponent_socket,
-                    'opponent_move',
-                    code=217,
-                    gameId=game_id,
-                    **response_data
-                )
-
-            # Verificar fin de juego
-            if game.state == GameState.FINISHED:
-                winner_id = game.winner
-                loser_id = opponent_id if winner_id == player_id else player_id
-                
-                # Notificar a ambos jugadores
-                for pid, player_info in session.players.items():
-                    is_winner = (pid == winner_id)
-                    self._send_message(
-                        player_info['socket'],
-                        'game_over',
-                        code=220,
-                        gameId=game_id,
-                        playerId=pid,
-                        winner=winner_id,
-                        loser=loser_id,
-                        message="¡Victoria!" if is_winner else "Derrota"
-                    )
-            else:
-                # Cambiar turno
-                next_player = session.get_opponent_id(game.current_turn)
-                
-                for pid, player_info in session.players.items():
-                    is_turn = (pid == next_player)
-                    self._send_message(
-                        player_info['socket'],
-                        'game_state',
-                        code=215 if is_turn else 216,
-                        gameId=game_id,
-                        playerId=pid,
-                        yourTurn=is_turn
-                    )
+                    logger.warning("Cliente envió frame no enmascarado, cerrando conexión")
+                    client_socket.close()
+                except:
+                    logger.warning("Cliente envió frame no enmascarado, cerrando conexión (error al cerrar)")
+                return None
                     
-        except Exception as e:
-            logger.error(f"Error en ataque: {e}")
-            self._send_error(client_socket, 440, str(e))
 
-    def _handle_surrender(self, client_socket: socket.socket, player_id: Optional[str], data: Dict):
-        """Maneja rendición de un jugador."""
-        if not player_id:
-            self._send_error(client_socket, 410, "Jugador no encontrado")
-            return
+            # Extended payload length
+            if payload_length == 126:
+                if len(data) < index + 2:
+                    logger.warning("Frame con payload length 126 pero datos insuficientes")
+                    return None
+                payload_length = int.from_bytes(data[index:index+2], 'big')
+                index += 2
+            elif payload_length == 127:
+                if len(data) < index + 8:
+                    logger.warning("Frame con payload length 127 pero datos insuficientes")
+                    return None
+                payload_length = int.from_bytes(data[index:index+8], 'big')
+                index += 8
 
-        game_id = data.get('gameId')
+            # Control frames
+            if opcode == 8:  # Close
+                return None
 
-        if game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return
+            if opcode == 9:  # Ping
+                pong = bytearray([0x8A, 0x00])
+                client_socket.send(pong)
+                return None  # evita recursión
 
-        session = self.sessions[game_id]
-        opponent_id = session.get_opponent_id(player_id)
+            # Masking key
+            if len(data) < index + 4:
+                logger.warning("Frame con máscara pero datos insuficientes para la clave de enmascarado")
+                return None
+            masking_key = data[index:index + 4]
+            index += 4
 
-        # Marcar game como terminado
-        game = session.game
-        game._state = GameState.FINISHED
-        game._winner = opponent_id
-        
-        logger.info(f"Jugador {player_id} se rindió en partida {game_id}")
+            # Payload
+            if len(data) < index + payload_length:
+                logger.warning("Frame con payload pero datos insuficientes para el payload completo")
+                return None
 
-        # Notificar a ambos jugadores
-        for pid, player_info in session.players.items():
-            is_winner = (pid == opponent_id)
-            self._send_message(
-                player_info['socket'],
-                'game_over',
-                code=220,
-                gameId=game_id,
-                winner=opponent_id,
-                message="¡Victoria!" if is_winner else "Tu oponente se rindió",
-                reason="surrender"
+            payload = data[index:index + payload_length]
+
+            # Unmask
+            payload = bytes(
+                payload[i] ^ masking_key[i % 4]
+                for i in range(len(payload))
             )
 
-        # Limpiar sesión
-        self._cleanup_session(game_id)
-
-    def _send_game_state(self, client_socket: socket.socket, game_id: str, player_id: str):
-        """Envía el estado actual del juego."""
-        if game_id not in self.sessions:
-            self._send_error(client_socket, 420, "Partida no encontrada")
-            return
-
-        session = self.sessions[game_id]
-        game = session.game
-
-        self._send_message(
-            client_socket,
-            'game_state',
-            code=200,
-            gameId=game_id,
-            playerId=player_id,
-            gameState=game.state.name,
-            currentTurn=game.current_turn,
-            yourTurn=(game.current_turn == player_id)
-        )
-
-    def _cleanup_client(self, client_socket: socket.socket, player_id: Optional[str]):
-        """Limpia recursos de un cliente desconectado."""
-        try:
-            client_socket.close()
-        except:
-            pass
-
-        if player_id and player_id in self.player_sessions:
-            game_id = self.player_sessions[player_id]
-            
-            if game_id in self.sessions:
-                session = self.sessions[game_id]
-                
-                # Notificar al oponente
-                opponent_id = session.get_opponent_id(player_id)
-                if opponent_id and opponent_id in session.players:
-                    opponent_socket = session.players[opponent_id]['socket']
-                    self._send_message(
-                        opponent_socket,
-                        'notification',
-                        code=450,
-                        message="Tu oponente se desconectó. Esperando reconexión..."
+            if opcode == 1:
+                try:
+                    return payload.decode('utf-8')
+                except UnicodeDecodeError as e:
+                    # Log detallado para debug
+                    logger.error(
+                        f"UnicodeDecodeError al decodificar payload: {e}\n"
+                        f"Payload length: {len(payload)} bytes\n"
+                        f"Primeros 100 bytes (hex): {payload[:100].hex()}\n"
+                        f"Masking key: {masking_key.hex()}\n"
+                        f"Opcode: {opcode}"
                     )
-                
-                # Eliminar jugador
-                if player_id in session.players:
-                    del session.players[player_id]
-                
-                # Si la partida está vacía, eliminarla
-                if len(session.players) == 0:
-                    self._cleanup_session(game_id)
-            
-            del self.player_sessions[player_id]
+                    # Intentar recuperar usando replacement chars
+                    try:
+                        return payload.decode('utf-8', errors='replace')
+                    except Exception as inner_e:
+                        logger.error(f"Falló recuperación con errors='replace': {inner_e}")
+                        return None
 
-        if client_socket in self.player_sockets:
-            del self.player_sockets[client_socket]
+            # Si llega binario y no lo usas
+            logger.warning(f"Recibido frame con opcode {opcode} no soportado")
+            return None
 
-        logger.info(f"Cliente desconectado: {player_id}")
+        except Exception:
+            return None
 
-    def _cleanup_session(self, game_id: str):
-        """Limpia una sesión de juego."""
-        if game_id in self.sessions:
-            session = self.sessions[game_id]
-            
-            # Desconectar todos los jugadores
-            for player_id in list(session.players.keys()):
-                if player_id in self.player_sessions:
-                    del self.player_sessions[player_id]
-            
-            del self.sessions[game_id]
-            logger.info(f"Sesión {game_id} eliminada")
+    def _create_websocket_frame(self, data: str) -> bytes:
+        """
+        Crea un WebSocket frame de texto según RFC 6455.
+        
+        Encapsula el string en un frame WebSocket no enmascarado
+        con opcode de texto (0x81) y añade información de longitud.
+        
+        Args:
+            data: String con el contenido del frame.
+        
+        Returns:
+            Bytes con el frame completo listo para enviar.
+        """
+        data_encoded = data.encode('utf-8')
+        frame = bytearray()
+        frame.append(0x81)
+
+        if len(data_encoded) <= 125:
+            frame.append(len(data_encoded))
+        else:
+            frame.append(126)
+            frame.extend(len(data_encoded).to_bytes(2, 'big'))
+
+        frame.extend(data_encoded)
+        return bytes(frame)
+
+    def start_server(self):
+        """
+        Inicia el servidor (para usar en un thread separado).
+        
+        Wrapper que llama a start() para permitir ejecutar el servidor
+        en un thread daemon.
+        """
+        self.start()

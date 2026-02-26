@@ -239,7 +239,7 @@ const Renderer = {
         const winnerName = document.getElementById('winner-name');
         const totalMoves = document.getElementById('total-moves');
         const accuracy = document.getElementById('accuracy');
-        const duration = document.getElementById('game-duration');
+        const duration = document.getElementById('ships-remaining');
         
         const isVictory = winner === GameState.playerName;
         

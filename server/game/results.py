@@ -84,3 +84,38 @@ class GameOverResult:
             "total_moves": self.total_moves,
             "ships_saved": self.ships_saved,
         }
+
+class PlayerStatistics:
+    """Represents statistics for a player at the end of the game."""
+
+    def __init__(self, player_id: str, total_moves: int, ships_sunk: int, ships_remaining: int, hits: int, misses: int):
+        self.player_id = player_id
+        self.total_moves = total_moves
+        self.ships_sunk = ships_sunk
+        self.ships_remaining = ships_remaining
+        self.hits = hits
+        self.misses = misses
+        self.accuracy = hits / total_moves if total_moves > 0 else 0.0
+
+    def __repr__(self) -> str:
+        return (
+            f"PlayerStatistics(player_id='{self.player_id}', total_moves={self.total_moves}, "
+            f"ships_sunk={self.ships_sunk}, ships_remaining={self.ships_remaining})"
+        )
+
+    def to_dict(self) -> dict:
+        """
+        Convert the player statistics to a dictionary.
+
+        Returns:
+            A dictionary representation of the player statistics.
+        """
+        return {
+            "player_id": self.player_id,
+            "total_moves": self.total_moves,
+            "ships_sunk": self.ships_sunk,
+            "ships_remaining": self.ships_remaining,
+            "hits": self.hits,
+            "misses": self.misses,
+            "accuracy": self.accuracy,
+        }

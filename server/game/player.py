@@ -6,9 +6,10 @@ Player class for the Battleship game.
 from typing import Optional, Dict
 from .ship import Ship, Coordinate
 from .board import Board
-from .enums import AttackOutcome
+from .enums import AttackOutcome, CellState
 from .errors import PlayerError, InvalidCoordinateError, ShipPlacementError, ShipOverlapError
 from .ship import ShipType
+from .results import PlayerStatistics
 
 
 class Player:
@@ -25,6 +26,8 @@ class Player:
         self._player_id = player_id.strip().lower().replace(" ", "_")
         self._board = Board(board_size)
         self._tracking_board = Board(board_size)  # To track opponent's board state
+        self._num_attacks = 0
+        self._num_hits = 0
 
     @property
     def player_id(self) -> str:
@@ -99,8 +102,7 @@ class Player:
             coord: The coordinate that was attacked.
             outcome: The outcome of the attack.
         """
-        from .enums import CellState
-
+        
         if outcome == AttackOutcome.HIT or outcome == AttackOutcome.SHIP_SUNK:
             self._tracking_board.set_cell_state(coord, CellState.HIT)
         elif outcome == AttackOutcome.MISS:
@@ -171,7 +173,35 @@ class Player:
         placed_ship_types = {ship.ship_type for ship in self._board.ships.values()}
 
         return required_ship_types == placed_ship_types
+    
+    def record_attack(self, hit: bool) -> None:
+        """
+        Record the result of an attack for statistics.
 
-    def __repr__(self) -> str:
-        ships_count = len(self._board.ships)
-        return f"Player(id='{self._player_id}', ships={ships_count})"
+        Args:
+            hit: Whether the attack was a hit or not.
+        """
+        self._num_attacks += 1
+        if hit:
+            self._num_hits += 1
+    
+    def get_stadistics_resume(self) -> PlayerStatistics:
+        """
+        Get a summary of the player's statistics.
+
+        Returns:
+            A PlayerStatistics object summarizing the player's performance.
+        """
+        total_attacks = self._num_attacks
+        hits = self._num_hits
+        misses = total_attacks - hits
+
+        return PlayerStatistics(
+            player_id=self._player_id,
+            total_moves=total_attacks,
+            ships_sunk=sum(1 for ship in self._board.ships.values() if ship.is_sunk()),
+            ships_remaining=sum(1 for ship in self._board.ships.values() if not ship.is_sunk()),
+            hits=hits,
+            misses=misses
+        )
+        

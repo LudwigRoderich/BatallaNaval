@@ -76,9 +76,9 @@ class Game:
             raise PlayerError("Game already has 2 players.")
 
         self._players[player_id] = Player(player_id, self._board_size)
-        print(f"Player '{player_id[:8]}' added to the game.")
+        #print(f"Player '{player_id[:8]}' added to the game.")
         if len(self._players) == 2:
-            print("Two players have joined. Starting the game...")
+            #print("Two players have joined. Starting the game...")
             try:
                 self.start()
             except GameStateError as e:
@@ -137,7 +137,7 @@ class Game:
 
         if len(self.players) == 2: self._state = GameState.PLACING_SHIPS
         #self._current_turn = self._players.keys().__iter__().__next__()
-        print("Game started. Players can now place their ships.")
+        #print("Game started. Players can now place their ships.")
         #print(f"Current turn: {self._current_turn}")
         #self._state = GameState.PLACING_SHIPS
 
@@ -194,11 +194,11 @@ class Game:
             )
 
         if attacker_id not in self._players:
-            raise PlayerError(f"Player '{attacker_id}' not found in the game.")
+            raise PlayerError(f"Player '{attacker_id[:8]}' not found in the game.")
 
         if attacker_id != self._current_turn:
             raise PlayerError(
-                f"It's not {attacker_id}'s turn. Current turn: {self._current_turn}"
+                f"It's not {attacker_id[:8]}'s turn. Current turn: {self._current_turn}"
             )
 
         # Get the defender (the other player)
@@ -207,6 +207,9 @@ class Game:
 
         # Execute the attack
         outcome = defender.receive_attack(coord)
+
+        # Update attacker's stats
+        self._players[attacker_id].record_attack(outcome in [AttackOutcome.HIT, AttackOutcome.SHIP_SUNK])
 
         # Update attacker's tracking board
         self._players[attacker_id].update_tracking_board(coord, outcome)

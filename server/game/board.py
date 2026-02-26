@@ -271,7 +271,7 @@ class Board:
         if len(coords) != ship.ship_type.length:
             return False
         
-        print(f"Validating ship of type {ship.ship_type.name} with coordinates: {coords} and orientation {ship._orientation.name}")
+        #print(f"Validating ship of type {ship.ship_type.name} with coordinates: {coords} and orientation {ship._orientation.name}")
         if ship._orientation == ShipOrientation.HORIZONTAL:
             # Verify that all y coordinates are the same and x coordinates are consecutive
             return all(coord.y == coords[0].y for coord in coords) and \

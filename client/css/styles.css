@@ -549,7 +549,7 @@ body::before {
 
 .placement-right {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 2rem;
     flex: 1;
     min-width: 280px;

@@ -67,7 +67,7 @@ const GameState = {
     
     // Datos del jugador
     get playerName() {
-        return sessionStorage.getItem('playerName') || '';
+        return sessionStorage.getItem('playerName') || 'Comandante';
     },
     set playerName(value) {
         sessionStorage.setItem('playerName', value);

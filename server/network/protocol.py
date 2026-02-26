@@ -82,6 +82,7 @@ class Protocol:
         "attack",
         "surrender",
         "ping",
+        "generate_random_placement",
         
         # Servidor -> Cliente
         "game_state",

@@ -104,6 +104,10 @@ const Renderer = {
             shipItem.className = 'ship-item';
             shipItem.dataset.shipId = ship.id;
             
+            // Agregar clase para colorear según el tipo de barco
+            const shipTypeClass = ship.type.toLowerCase();
+            shipItem.classList.add(shipTypeClass);
+            
             if (ship.placed) {
                 shipItem.classList.add('placed');
             }
@@ -196,6 +200,63 @@ const Renderer = {
         
         logContainer.appendChild(entry);
         logContainer.scrollTop = logContainer.scrollHeight;
+        
+        // Guardar en localStorage
+        this.saveCombatLog();
+    },
+    
+    /**
+     * Carga el log de combate desde localStorage
+     */
+    loadCombatLog() {
+        const savedLog = localStorage.getItem('combatLog');
+        if (!savedLog) return;
+        
+        try {
+            const logEntries = JSON.parse(savedLog);
+            const logContainer = document.getElementById('combat-log');
+            if (!logContainer) return;
+            
+            logContainer.innerHTML = '';
+            
+            logEntries.forEach(entry => {
+                const div = document.createElement('div');
+                div.className = `log-entry ${entry.type}`;
+                div.textContent = entry.message;
+                logContainer.appendChild(div);
+            });
+            
+            logContainer.scrollTop = logContainer.scrollHeight;
+        } catch (error) {
+            console.error('[Renderer] Error cargando log:', error);
+        }
+    },
+    
+    /**
+     * Guarda el log de combate en localStorage
+     */
+    saveCombatLog() {
+        const logContainer = document.getElementById('combat-log');
+        if (!logContainer) return;
+        
+        const entries = [];
+        logContainer.querySelectorAll('.log-entry').forEach(entry => {
+            const typeMatch = entry.className.match(/log-entry (\w+)/);
+            const type = typeMatch ? typeMatch[1] : 'info';
+            entries.push({
+                message: entry.textContent,
+                type: type
+            });
+        });
+        
+        localStorage.setItem('combatLog', JSON.stringify(entries));
+    },
+    
+    /**
+     * Limpia el log de combate en localStorage
+     */
+    clearCombatLog() {
+        localStorage.removeItem('combatLog');
     },
     
     /**
@@ -486,6 +547,111 @@ const Renderer = {
             turnEl.style.color = '#FF9800';
         }
         Renderer.enableAttackBoard(false);
+    },
+    
+    /**
+     * Muestra una notificación modal
+     */
+    showNotification(title, message, actionText = null, actionCallback = null, escapable = false) {
+        const modal = document.getElementById('notification-modal');
+        const titleEl = document.getElementById('modal-title');
+        const messageEl = document.getElementById('modal-message');
+        const closeBtn = document.getElementById('modal-btn-close');
+        const actionBtn = document.getElementById('modal-btn-action');
+        const actionBtnText = document.getElementById('modal-btn-action-text');
+        
+        if (!modal) return;
+        
+        // Configurar contenido
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        
+        // Limpiar listeners anteriores
+        closeBtn.replaceWith(closeBtn.cloneNode(true));
+        actionBtn.replaceWith(actionBtn.cloneNode(true));
+        
+        const newCloseBtn = document.getElementById('modal-btn-close');
+        const newActionBtn = document.getElementById('modal-btn-action');
+        
+        // Si NO es escapable, ocultar el botón cerrar
+        if (!escapable) {
+            newCloseBtn.style.display = 'none';
+        } else {
+            newCloseBtn.style.display = 'block';
+            // Cerrar modal
+            newCloseBtn.addEventListener('click', () => {
+                this.hideNotification();
+            });
+        }
+        
+        // Botón de acción (si existe)
+        if (actionText && actionCallback) {
+            actionBtnText.textContent = actionText;
+            newActionBtn.style.display = 'block';
+            newActionBtn.addEventListener('click', () => {
+                if (escapable) {
+                    this.hideNotification();
+                }
+                actionCallback();
+            });
+        } else {
+            newActionBtn.style.display = 'none';
+        }
+        
+        // Mostrar modal
+        modal.classList.remove('hidden');
+    },
+    
+    /**
+     * Oculta la notificación modal
+     */
+    hideNotification() {
+        const modal = document.getElementById('notification-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    },
+    
+    /**
+     * Actualiza el contador de movimientos
+     */
+    updateMoveCount(count) {
+        const moveCountEl = document.getElementById('move-count');
+        if (moveCountEl) {
+            moveCountEl.textContent = count;
+        }
+    },
+    
+    /**
+     * Actualiza los contadores de barcos restantes
+     */
+    updateShipsRemaining(yourShips, enemyShips) {
+        const yourEl = document.getElementById('your-ships-remaining');
+        const enemyEl = document.getElementById('enemy-ships-remaining');
+        
+        if (yourEl) {
+            yourEl.textContent = yourShips;
+            // Cambiar color si quedan pocos
+            if (yourShips <= 2) {
+                yourEl.style.color = 'var(--danger-red)';
+            } else if (yourShips <= 4) {
+                yourEl.style.color = 'var(--warning-orange)';
+            } else {
+                yourEl.style.color = 'var(--sonar-green)';
+            }
+        }
+        
+        if (enemyEl) {
+            enemyEl.textContent = enemyShips;
+            // Cambiar color si quedan pocos
+            if (enemyShips <= 2) {
+                enemyEl.style.color = 'var(--sonar-green)';
+            } else if (enemyShips <= 4) {
+                enemyEl.style.color = 'var(--warning-orange)';
+            } else {
+                enemyEl.style.color = 'var(--neutral-gray)';
+            }
+        }
     }
 };
 

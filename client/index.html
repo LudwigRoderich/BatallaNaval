@@ -157,7 +157,11 @@
             </div>
         </div>
 
-        
+        <div class="game-actions" style="display: none;">
+            <button id="btn-surrender" class="btn btn-danger">
+                <span>RENDIRSE</span>
+            </button>
+        </div>
     </section>
 
     <!-- PANTALLA DE FIN DE JUEGO -->
@@ -194,6 +198,26 @@
             </div>
         </div>
     </section>
+
+    <!-- MODAL DE NOTIFICACIONES -->
+    <div id="notification-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Notificación</h3>
+            </div>
+            <div class="modal-body">
+                <p id="modal-message">Mensaje predeterminado</p>
+            </div>
+            <div class="modal-footer">
+                <button id="modal-btn-close" class="btn btn-primary">
+                    <span>CERRAR</span>
+                </button>
+                <button id="modal-btn-action" class="btn btn-secondary" style="display: none;">
+                    <span id="modal-btn-action-text">ACCIÓN</span>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Scripts en orden correcto: Dependencias primero, main.js último -->
     <script src="js/state.js"></script>

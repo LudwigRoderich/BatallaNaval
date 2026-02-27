@@ -428,9 +428,10 @@ class GameSession:
             result = self.game.attack(attacker_id, coord)
             
             defender_id = result.defender_id
-            self.logger.info(
-                f"[SESSION {self.session_id[:8]}] Ataque de {attacker_id[:8]} a ({coord.x}, {coord.y}): {result.outcome.name}"
-            )
+            if result.outcome.name in ['HIT', 'SHIP_SUNK']:
+                self.logger.info(
+                    f"[SESSION {self.session_id[:8]}] Ataque de {attacker_id[:8]} a ({coord.x}, {coord.y}): {result.outcome.name}"
+                )
             
             messages: List[OutgoingMessage] = []
             
@@ -487,6 +488,7 @@ class GameSession:
                 # Juego terminado - enviar code 220 a ambos
                 winner_id = self.game.winner
                 self.finished_at = datetime.now()
+                self.is_active = False  # Marcar sesión como inactiva para permitir limpieza
                 self.logger.info(f"[SESSION {self.session_id[:8]}] ¡Juego terminado! Ganador: {winner_id}")
 
                 # calcular estadísticas de cada jugador
@@ -515,7 +517,7 @@ class GameSession:
                             'winner': winner_id,
                             'state': 'FINISHED',
                             'statistics': statistics[pid],
-                            'message': f"¡Game Over! Ganador: {winner_name}"
+                            'message': f"¡Game Over! Ganador: {winner_name}",
                         }
                     )
                     messages.append(game_over_msg)
@@ -531,6 +533,12 @@ class GameSession:
                     is_your_turn = (pid == current_turn)
                     code = 215 if is_your_turn else 216  # 215 = YOUR_TURN, 216 = WAITING
                     
+                    # Calcular barcos restantes
+                    your_player = self.game._players.get(pid)
+                    other_player = self.game._players.get(other_id) if other_id else None
+                    your_ships_remaining = sum(1 for ship in your_player.get_ships().values() if not ship.is_sunk()) if your_player else 0
+                    enemy_ships_remaining = sum(1 for ship in other_player.get_ships().values() if not ship.is_sunk()) if other_player else 0
+                    
                     turn_msg = OutgoingMessage(
                         pid,
                         {
@@ -543,6 +551,8 @@ class GameSession:
                             'currentTurn': current_turn,
                             'yourTurn': is_your_turn,
                             'state': 'IN_PROGRESS',
+                            'yourShipsRemaining': your_ships_remaining,
+                            'enemyShipsRemaining': enemy_ships_remaining,
                             'message': '¡Es tu turno!' if is_your_turn else 'Esperando al oponente...'
                         }
                     )
@@ -584,6 +594,7 @@ class GameSession:
             self.game._state = GameState.FINISHED
             self.game._winner = winner_id
             self.finished_at = datetime.now()
+            self.is_active = False  # Marcar sesión como inactiva para permitir limpieza
             
             self.logger.info(f"[SESSION {self.session_id[:8]}] Jugador {player_id[:8]} se rindió")
             
@@ -1111,6 +1122,7 @@ class BatallaNavalServer:
                     is_valid, error_msg = self.protocol.validate_message(data)
                     
                     if not is_valid:
+                        self.logger.warning(f"Mensaje inválido de {client_address}: {error_msg}\nContenido: {data}")
                         self._send_error(client_socket, 401, error_msg)
                         continue
 

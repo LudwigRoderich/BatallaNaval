@@ -261,7 +261,7 @@ const API = {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error('Timeout en reconexión'));
-            }, 10000);
+            }, 5000);
             
             let resolved = false;
             

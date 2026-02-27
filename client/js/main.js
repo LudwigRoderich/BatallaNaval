@@ -9,6 +9,7 @@
  * 5. El cliente solo renderiza lo que el servidor le dice
  */
 
+
 // ============================================
 // INICIALIZACIÓN GLOBAL
 // ============================================
@@ -94,7 +95,7 @@ function setupGlobalMessageHandlers() {
                 Renderer.clearLoadingScreen();
                 GameState.switchScreen(GameState.SCREEN_GAME);
                 setupGameScreen();
-                // El servidor envía quién comienza
+                
                 if (message.currentTurn === GameState.playerId) {
                     Renderer.addLogEntry('¡Es tu turno!', 'info');
                 } else {
@@ -106,29 +107,40 @@ function setupGlobalMessageHandlers() {
                 console.log('[HANDLERS] → Es tu turno');
                 Renderer.addLogEntry('¡Es tu turno!', 'info');
                 Renderer.enableAttackBoard(true);
+                
+                // Actualizar contadores de barcos si vienen en el mensaje
+                if (message.yourShipsRemaining !== undefined && message.enemyShipsRemaining !== undefined) {
+                    Renderer.updateShipsRemaining(message.yourShipsRemaining, message.enemyShipsRemaining);
+                }
                 break;
                 
             case 216: // WAITING_FOR_OPPONENT_TURN (se acabó tu turno)
                 console.log('[HANDLERS] → Esperando turno del oponente');
                 Renderer.addLogEntry(`Turno de ${message.opponentName}`, 'info');
                 Renderer.enableAttackBoard(false);
+                
+                // Actualizar contadores de barcos si vienen en el mensaje
+                if (message.yourShipsRemaining !== undefined && message.enemyShipsRemaining !== undefined) {
+                    Renderer.updateShipsRemaining(message.yourShipsRemaining, message.enemyShipsRemaining);
+                }
                 break;
                 
             case 220: // GAME_OVER
-                console.log('[HANDLERS] → Juego terminado, ganador:', message.winner);
+                console.log('[HANDLERS] ', message.message);
                 Renderer.clearLoadingScreen();
-                const isVictory = message.winner === message.playerId;
-                endGame(isVictory, message.statistics || {});
+                endGame(message);
                 break;
                 
             case 230: // RECONNECTING
                 console.log('[HANDLERS] → Estado 230: reconectando');
                 Renderer.showReconnecting();
+                Renderer.hideNotification();
                 break;
                 
             case 231: // RECONNECT_SUCCESS
                 console.log('[HANDLERS] → Estado 231: reconexión exitosa, restaurando estado');
                 restoreGameStateFromServer(message);
+                Renderer.hideNotification();
                 break;
                 
             default:
@@ -144,8 +156,15 @@ function setupGlobalMessageHandlers() {
         
         const {x, y, outcome, shipSunk} = message;
         
+        // ✅ Incrementar contador de movimientos
+        GameState.game.moveCount++;
+        Renderer.updateMoveCount(GameState.game.moveCount);
+        
         // ✅ Actualizar estado del juego
         GameState.updateAttackCell(x, y, outcome.toLowerCase());
+        
+        // ✅ Guardar attackBoard en localStorage para recuperación posterior
+        localStorage.setItem('attackBoard', JSON.stringify(GameState.game.attackBoard));
         
         // ✅ Renderizar en tablero de ataque
         const cellState = outcome === 'MISS' ? 'miss' : outcome === 'HIT' ? 'hit' : 'sunk';
@@ -181,6 +200,9 @@ function setupGlobalMessageHandlers() {
         // ✅ Actualizar estado del juego
         GameState.updateDefenseCell(x, y, outcome.toLowerCase());
         
+        // ✅ Guardar defenseBoard en localStorage para recuperación posterior
+        localStorage.setItem('defenseBoard', JSON.stringify(GameState.game.defenseBoard));
+        
         // ✅ Renderizar en tablero de defensa
         const cellState = outcome === 'MISS' ? 'miss' : outcome === 'HIT' ? 'hit' : 'sunk';
         Renderer.updateCell('defense-board', x, y, cellState);
@@ -206,8 +228,25 @@ function setupGlobalMessageHandlers() {
     // NOTIFICACIONES (solo informativas)
     // ==============================================
     API.on('notification', (message) => {
-        console.log('[HANDLERS] notification:', message.message);
+        console.log('[HANDLERS] notification:', message.message, 'code:', message.code);
         Renderer.addLogEntry(message.message, 'notification');
+        
+        // Mostrar modal para notificaciones críticas (desconexión)
+        if (message.code === 450) {  // OPPONENT_DISCONNECTED
+            if (GameState.currentScreen  !== GameState.SCREEN_GAMEOVER){
+                Renderer.showNotification(
+                    '⚠️ ATENCIÓN',
+                    message.message,
+                    null,
+                    null,
+                    true  // Escapable
+                );
+            }
+        }
+        else if (message.code === 451) {  // RECONNECTED (Usuario o rival)
+            Renderer.hideNotification();
+            Renderer.addLogEntry('Tu oponente se ha reconectado', 'success');
+        }
     });
     
     // ==============================================
@@ -223,13 +262,29 @@ function setupGlobalEventListeners() {
     // Desconexión del WebSocket
     document.addEventListener('websocket-disconnected', () => {
         console.log('[LISTENERS] WebSocket desconectado');
-        Renderer.showDisconnected();
-        Renderer.addLogEntry('Conexión perdida con el servidor', 'error');
+        
+        // Si estás en juego o esperando algo, mostrar notificación Modal bloqueante
+        if (GameState.currentScreen === GameState.SCREEN_GAME || 
+            GameState.currentScreen === GameState.SCREEN_PLACEMENT ||
+            GameState.currentScreen === GameState.SCREEN_WAITING_OPPONENT ||
+            GameState.currentScreen === GameState.SCREEN_WAITING_PLACEMENT) {
+            
+            Renderer.showNotification(
+                '⚠️ CONEXIÓN PERDIDA',
+                'Se perdió la conexión con el servidor. Intentando reconectar automáticamente...',
+                'ENTENDIDO',
+                null,
+                false  // No escapable
+            );
+            Renderer.addLogEntry('Conexión perdida con el servidor', 'error');
+        }
     });
     
     // Reconexión del WebSocket
     document.addEventListener('websocket-reconnected', () => {
         console.log('[LISTENERS] WebSocket reconectado');
+        // Cerrar automáticamente el modal de desconexión
+        Renderer.hideNotification();
         Renderer.addLogEntry('Reconectado con el servidor', 'success');
     });
     
@@ -403,15 +458,21 @@ function setupPlacementScreen() {
         GameState.placeShip(selectedShip.id, positions);
         Renderer.placeShipOnBoard('placement-board', positions, selectedShip.type);
         Renderer.renderShipsList(GameState.placement.ships);
+        
+        // ✅ Deseleccionar barco después de colocarlo
+        GameState.selectShip(null);
+        document.querySelectorAll('.ship-item').forEach(s => s.classList.remove('selected'));
+        Renderer.clearShipPreview('placement-board');
     });
     
     // Posicionamiento aleatorio
     if (randomBtn) {
+        const originalText = randomBtn.innerHTML;
         randomBtn.addEventListener('click', async () => {
             try {
                 // Deshabilitar botón mientras se espera respuesta del servidor
                 randomBtn.disabled = true;
-                const originalText = randomBtn.innerHTML;
+                
                 randomBtn.innerHTML = '<span>GENERANDO...</span>';
                 
                 // Solicitar disposición válida al servidor
@@ -440,6 +501,11 @@ function setupPlacementScreen() {
                     
                     // Actualizar lista de barcos
                     Renderer.renderShipsList(GameState.placement.ships);
+                    
+                    // ✅ Deseleccionar barco después de colocar
+                    GameState.selectShip(null);
+                    document.querySelectorAll('.ship-item').forEach(s => s.classList.remove('selected'));
+                    Renderer.clearShipPreview('placement-board');
                     
                     // Feedback visual
                     showWarning(`✓ ${result.ships.length} barcos posicionados sin solapamientos`);
@@ -520,6 +586,44 @@ function setupGameScreen() {
         Renderer.placeShipOnBoard('defense-board', ship.positions, ship.type);
     });
     
+    // ✅ Recuperar ataques recibidos si existe defenseBoard guardado en localStorage
+    const savedDefenseBoard = localStorage.getItem('defenseBoard');
+    if (savedDefenseBoard) {
+        try {
+            GameState.game.defenseBoard = JSON.parse(savedDefenseBoard);
+            // Renderizar los ataques recibidos
+            for (let y = 0; y < GameState.boardSize; y++) {
+                for (let x = 0; x < GameState.boardSize; x++) {
+                    const cellState = GameState.game.defenseBoard[y][x];
+                    if (cellState !== 'empty') {
+                        Renderer.updateCell('defense-board', x, y, cellState);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[SETUP] Error al restaurar defenseBoard:', e);
+        }
+    }
+    
+    // ✅ Recuperar ataques realizados si existe attackBoard guardado en localStorage
+    const savedAttackBoard = localStorage.getItem('attackBoard');
+    if (savedAttackBoard) {
+        try {
+            GameState.game.attackBoard = JSON.parse(savedAttackBoard);
+            // Renderizar los ataques realizados
+            for (let y = 0; y < GameState.boardSize; y++) {
+                for (let x = 0; x < GameState.boardSize; x++) {
+                    const cellState = GameState.game.attackBoard[y][x];
+                    if (cellState !== 'empty') {
+                        Renderer.updateCell('attack-board', x, y, cellState);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[SETUP] Error al restaurar attackBoard:', e);
+        }
+    }
+    
     // ✅ Handler para ataques
     const attackBoard = document.getElementById('attack-board');
     if (attackBoard) {
@@ -531,21 +635,26 @@ function setupGameScreen() {
         }
     }
     
-    // ✅ Limpiar y preparar log de combate
-    const combatLog = document.getElementById('combat-log');
-    if (combatLog) {
-        combatLog.innerHTML = '';
+    // ✅ Handler para rendición
+    const surrenderBtn = document.getElementById('btn-surrender');
+    if (surrenderBtn) {
+        surrenderBtn.addEventListener('click', handleSurrender);
     }
     
-    // ✅ Log inicial
-    Renderer.addLogEntry('⚔️ ¡Juego iniciado!', 'info');
-    if (GameState.game.currentTurn && GameState.game.currentTurn === GameState.playerId) {
-        Renderer.addLogEntry('¡Es tu turno!', 'success');
-        Renderer.enableAttackBoard(true);
-    } else {
-        Renderer.addLogEntry(`Turno de ${GameState.opponentName}`, 'warning');
-        Renderer.enableAttackBoard(false);
+    // ✅ Preparar log de combate
+    const combatLog = document.getElementById('combat-log');
+    if (combatLog) {
+        // Si hay un log guardado, cargarlo. Si no, iniciar vacío.
+        const savedLog = localStorage.getItem('combatLog');
+        if (savedLog) {
+            Renderer.loadCombatLog();
+        } else {
+            combatLog.innerHTML = '';
+        }
     }
+    
+    // ✅ Log inicial (solo mensaje de inicio, los de turno vienen del handler global)
+    Renderer.addLogEntry('⚔️ ¡Juego iniciado!', 'info');
     
     console.log('[SETUP] ✓ Pantalla de juego configurada');
 }
@@ -580,6 +689,27 @@ async function handleAttackClick(e) {
     }
 }
 
+async function handleSurrender() {
+    // Confirmación antes de rendirse
+    if (!confirm('¿Estás seguro de que quieres rendirte? Perderás la partida.')) {
+        return;
+    }
+    
+    const surrenderBtn = document.getElementById('btn-surrender');
+    surrenderBtn.disabled = true;
+    surrenderBtn.innerHTML = '<span>ENVIANDO...</span>';
+    
+    try {
+        await API.surrender();
+        // El servidor responderá con game_over
+        // El handler global lo procesará
+    } catch (error) {
+        showError(`Error en rendición: ${error.message}`);
+        surrenderBtn.disabled = false;
+        surrenderBtn.innerHTML = '<span>RENDIRSE</span>';
+    }
+}
+
 // ============================================
 // FIN DE JUEGO
 // ============================================
@@ -587,10 +717,59 @@ async function handleAttackClick(e) {
 function endGame(server_message) {
     const isVictory = server_message.winner === server_message.playerId;
     const stats = server_message.statistics || {};
-    console.log('[MAIN] Fin de juego, victoria:', isVictory);
+    const reason = server_message.reason || 'normal';
+    
+    console.log('[MAIN] Fin de juego, victoria:', isVictory, ', razón:', reason);
 
-    // ✅ Limpiar datos de sesión activa
+    let notificationTitle = '¡JUEGO TERMINADO!';
+    let notificationMsg = '';
+    let pop_notification = true;
+    
+    switch(reason) {
+        case 'surrender':
+            notificationTitle = isVictory ? '¡VICTORIA!' : 'DERROTA';
+            notificationMsg = isVictory ? 
+                `${server_message.opponentName} se rindió. ¡Ganaste!` :
+                `Te has rendido. ${server_message.opponentName} gana.`;
+            break;
+        case 'opponent_timeout':
+            notificationTitle = '¡VICTORIA POR TIMEOUT!';
+            notificationMsg = `Tu oponente no se reconectó a tiempo. ¡Ganaste por timeout!`;
+            break;
+        case 'reconnect_timeout':
+            notificationTitle = 'DERROTA POR TIMEOUT';
+            notificationMsg = `No te reconectaste a tiempo. Has perdido la partida.`;
+            break;
+        case 'opponent_disconnected':
+            notificationTitle = isVictory ? '¡VICTORIA!' : 'DERROTA';
+            notificationMsg = isVictory ?
+                `${server_message.opponentName} se desconectó. Ganaste.` :
+                `Te desconectaste. ${server_message.opponentName} gana.`;
+            break;
+        default: 
+            pop_notification = false;
+            showGameOverStats(server_message, isVictory, stats);
+
+    }
+    
+    if (pop_notification) {
+        Renderer.showNotification(
+            notificationTitle,
+            notificationMsg,
+            escapable = false
+        );
+    }
+}
+
+function showGameOverStats(server_message, isVictory, stats) {
+    // ✅ Limpiar TODOS los datos de sesión activa al terminar
+    localStorage.removeItem('playerId');
+    localStorage.removeItem('sessionId');
     localStorage.removeItem('placedShips');
+    localStorage.removeItem('combatLog');
+    localStorage.removeItem('defenseBoard');
+    localStorage.removeItem('attackBoard');
+    sessionStorage.clear();
 
     // ✅ Cambiar a pantalla de game over
     GameState.switchScreen(GameState.SCREEN_GAMEOVER);
@@ -611,8 +790,8 @@ function endGame(server_message) {
 
     if (subtitle) {
         subtitle.textContent = isVictory ?
-            `¡${server_message.playerName} ha ganado!` :
-            `${server_message.opponentName} ha ganado`;
+            `¡Has hundido todos los barcos de ${server_message.opponentName}!` :
+            `¡${server_message.opponentName} ha hundido todos tus barcos!`;
     }
 
     if (winnerName) {
@@ -629,7 +808,7 @@ function endGame(server_message) {
     }
     if (ships_remaining) {
         // el objeto stats puede traer duration o no
-        ships_remaining.textContent = stats.ships_remaining || 'Sin Registro...';
+        ships_remaining.textContent = stats.ships_remaining || 'Sin Sobrevivientes...';
     }
 
     // ✅ Mostrar log final
@@ -687,6 +866,14 @@ async function handleSessionRestored() {
         }
     } catch (error) {
         console.error('[MAIN] Error reconectando:', error);
+        // Limpiar TODO si la reconexión falla
+        localStorage.removeItem('playerId');
+        localStorage.removeItem('sessionId');
+        localStorage.removeItem('placedShips');
+        localStorage.removeItem('combatLog');
+        localStorage.removeItem('defenseBoard');
+        localStorage.removeItem('attackBoard');
+        sessionStorage.clear();
         handleSessionExpired('reconnect_failed');
     }
 }
@@ -849,11 +1036,17 @@ function handleSessionExpired(reason) {
     console.log('[MAIN] Sesión expirada:', reason);
     GameState.clear();
     Renderer.clearLoadingScreen();
-    Renderer.showDisconnected();
     
-    setTimeout(() => {
-        window.location.reload();
-    }, 3000);
+    const message = reason === 'reconnect_timeout' 
+        ? 'No pudimos reconectar en el tiempo permitido. La partida fue cancelada.'
+        : 'Tu sesión ha expirado.';
+    
+    Renderer.showNotification(
+        'SESIÓN EXPIRADA',
+        message,
+        'RECARGAR',
+        () => window.location.reload()
+    );
 }
 
 // ============================================

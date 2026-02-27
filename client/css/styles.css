@@ -376,30 +376,29 @@ body::before {
 
 /* Colores diferenciados por tipo de barco */
 .cell.ship.aircraft-carrier {
-    background: linear-gradient(135deg, #2d8659, #1f5a3f);
-    border-color: #26a641;
+    background: linear-gradient(135deg, #5e81f4, #2f4fb3); /* azul real suavizado */
+    border-color: #4f6fe0;
 }
 
 .cell.ship.battleship {
-    background: linear-gradient(135deg, #2d7fa6, #1f5a80);
-    border-color: #00d9ff;
+    background: linear-gradient(135deg, #4fd1e0, #1f8fa3); /* cian moderado */
+    border-color: #38b6c9;
 }
 
 .cell.ship.cruiser {
-    background: linear-gradient(135deg, #2a7a9b, #1e5570);
-    border-color: #00b4d8;
+    background: linear-gradient(135deg, #9a7cff, #5a3fc2); /* violeta controlado */
+    border-color: #7c5ce0;
 }
 
 .cell.ship.destroyer {
-    background: linear-gradient(135deg, #2d6a7f, #1f4a5a);
-    border-color: #0898b3;
+    background: linear-gradient(135deg, #4fd18a, #1f8f57); /* verde frío */
+    border-color: #38b873;
 }
 
 .cell.ship.submarine {
-    background: linear-gradient(135deg, #2d8a65, #1f6248);
-    border-color: #1dd3b0;
+    background: linear-gradient(135deg, #c77dff, #7b3fb3); /* magenta frío (no rojo) */
+    border-color: #a55ee0;
 }
-
 .cell.hit {
     background: radial-gradient(circle, var(--warning-orange), var(--ocean-dark));
     border-color: var(--warning-orange);
@@ -607,6 +606,53 @@ body::before {
     pointer-events: none;
 }
 
+/* Colores distintivos por tipo de barco */
+
+.ship-item.aircraft_carrier .ship-segment {
+    background: #4f6fe0; /* azul real suavizado */
+    border-color: #4f6fe0;
+}
+
+.ship-item.aircraft_carrier:hover:not(.placed) {
+    border-color: #4f6fe0;
+}
+
+.ship-item.battleship .ship-segment {
+    background: #38b6c9; /* cian moderado */
+    border-color: #38b6c9;
+}
+
+.ship-item.battleship:hover:not(.placed) {
+    border-color: #38b6c9;
+}
+
+.ship-item.cruiser .ship-segment {
+    background: #7c5ce0; /* violeta controlado */
+    border-color: #7c5ce0;
+}
+
+.ship-item.cruiser:hover:not(.placed) {
+    border-color: #7c5ce0;
+}
+
+.ship-item.destroyer .ship-segment {
+    background: #38b873; /* verde frío */
+    border-color: #38b873;
+}
+
+.ship-item.destroyer:hover:not(.placed) {
+    border-color: #38b873;
+}
+
+.ship-item.submarine .ship-segment {
+    background: #a55ee0; /* magenta frío */
+    border-color: #a55ee0;
+}
+
+.ship-item.submarine:hover:not(.placed) {
+    border-color: #a55ee0;
+}
+
 .ship-icon {
     display: flex;
     gap: 3px;
@@ -792,6 +838,32 @@ body::before {
     border-left-color: var(--danger-red);
     color: var(--danger-red);
     font-weight: 600;
+}
+
+.log-entry.warning {
+    border-left-color: var(--warning-orange);
+    color: var(--warning-orange);
+}
+
+.log-entry.danger {
+    border-left-color: var(--danger-red);
+    color: var(--danger-red);
+    font-weight: 600;
+}
+
+.log-entry.info {
+    border-left-color: var(--neutral-gray);
+    color: var(--neutral-gray);
+}
+
+.log-entry.success {
+    border-left-color: var(--sonar-green);
+    color: var(--sonar-green);
+}
+
+.log-entry.error {
+    border-left-color: var(--danger-red);
+    color: var(--danger-red);
 }
 
 /* ===== PANTALLA GAME OVER ===== */
@@ -1133,3 +1205,90 @@ body::before {
     border-top: 4px solid var(--danger-red);
 }
 
+/* ============================================================
+   MODAL DE NOTIFICACIONES
+   ============================================================ */
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.modal.hidden {
+    display: none;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Prevenir interacción con el fondo cuando el modal está visible */
+.modal:not(.hidden) {
+    backdrop-filter: blur(2px);
+}
+
+.modal-content {
+    background: linear-gradient(135deg, var(--ocean-dark) 0%, var(--ocean-medium) 100%);
+    border: 2px solid var(--aqua);
+    border-radius: 12px;
+    padding: 40px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 0 40px rgba(0, 180, 216, 0.4), inset 0 0 20px rgba(0, 180, 216, 0.1);
+    animation: modalSlideIn 0.3s ease;
+    position: relative;
+    z-index: 1001;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: scale(0.8) translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    margin-bottom: 20px;
+}
+
+.modal-header h3 {
+    font-family: var(--font-display);
+    color: var(--aqua-bright);
+    font-size: 24px;
+    text-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+}
+
+.modal-body {
+    margin-bottom: 30px;
+    line-height: 1.6;
+    color: var(--light-gray);
+    font-size: 16px;
+}
+
+.modal-body p {
+    margin: 0;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.modal-footer .btn {
+    padding: 10px 20px;
+    font-size: 14px;
+    min-width: 120px;
+}

@@ -23,10 +23,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# FASTAPI - CONFIGURACIÓN INICIAL
-# ============================================================
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Ciclo de vida de la aplicación FastAPI."""

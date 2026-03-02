@@ -425,10 +425,10 @@ const Renderer = {
      * Muestra pantalla de desconexión
      */
     showDisconnected() {
-        console.log('[RENDER] ❌ Desconectado');
+        console.log('[RENDER] Desconectado');
         this.clearLoadingScreen();
         const loading = this._createLoadingScreen(
-            '❌ Desconectado',
+            ' Desconectado',
             'Se perdió la conexión del servidor. Reconectando automáticamente...',
             true
         );
@@ -655,7 +655,6 @@ const Renderer = {
     }
 };
 
-// Exportar para uso en otros módulos
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = Renderer;
 }

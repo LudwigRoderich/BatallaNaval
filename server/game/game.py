@@ -76,9 +76,7 @@ class Game:
             raise PlayerError("Game already has 2 players.")
 
         self._players[player_id] = Player(player_id, self._board_size)
-        #print(f"Player '{player_id[:8]}' added to the game.")
         if len(self._players) == 2:
-            #print("Two players have joined. Starting the game...")
             try:
                 self.start()
             except GameStateError as e:
@@ -136,10 +134,6 @@ class Game:
             )
 
         if len(self.players) == 2: self._state = GameState.PLACING_SHIPS
-        #self._current_turn = self._players.keys().__iter__().__next__()
-        #print("Game started. Players can now place their ships.")
-        #print(f"Current turn: {self._current_turn}")
-        #self._state = GameState.PLACING_SHIPS
 
     def finish_ship_placement(self) -> None:
         """
@@ -163,7 +157,6 @@ class Game:
                 "Cannot finish ship placement: not all players have placed all their ships."
             )
 
-        # Start the game
         self._state = GameState.IN_PROGRESS
         player_ids = list(self._players.keys())
         self._current_turn = player_ids[0]
@@ -201,23 +194,17 @@ class Game:
                 f"It's not {attacker_id[:8]}'s turn. Current turn: {self._current_turn}"
             )
 
-        # Get the defender (the other player)
         defender_id = self._get_other_player(attacker_id)
         defender = self._players[defender_id]
 
-        # Execute the attack
         outcome = defender.receive_attack(coord)
 
-        # Update attacker's stats
         self._players[attacker_id].record_attack(outcome in [AttackOutcome.HIT, AttackOutcome.SHIP_SUNK])
 
-        # Update attacker's tracking board
         self._players[attacker_id].update_tracking_board(coord, outcome)
 
-        # Increment move count
         self._move_count += 1
 
-        # Check if the game is finished
         game_finished = False
         ship_sunk = outcome == AttackOutcome.SHIP_SUNK
 
@@ -226,7 +213,6 @@ class Game:
             self._state = GameState.FINISHED
             self._winner = attacker_id
 
-        # Switch turns (only if attack didn't hit or game is not finished)
         if outcome == AttackOutcome.MISS or outcome == AttackOutcome.ALREADY_ATTACKED:
             self._switch_turn()
 
@@ -336,7 +322,6 @@ class Game:
         loser_id = self._get_other_player(self._winner)
         winner = self._players[self._winner]
 
-        # Count winning moves (hits + sinks)
         winning_moves = 0
         for coord in winner.tracking_board.get_attacked_coordinates():
             state = winner.tracking_board.get_cell_state(coord)

@@ -10,72 +10,42 @@ from typing import Dict, Optional, Tuple
 class Protocol:
     """Protocolo para comunicación cliente-servidor en Batalla Naval."""
 
-    # Códigos de estado
     CODES = {
-        # Éxito
         200: "OK",
-        201: "CREATED",
         
-        # Información
         210: "WAITING_FOR_OPPONENT",
         211: "BOTH_PLAYERS_READY",
         212: "GAME_STARTED",
         213: "WAITING_FOR_SHIPS",
-        214: "PLACING_SHIPS",
         215: "YOUR_TURN",
         216: "WAITING_FOR_OPPONENT_TURN",
         217: "ATTACK_REGISTERED",
         
-        # Fin de juego
         220: "GAME_OVER",
-        221: "VICTORY",
-        222: "DEFEAT",
-        
-        # Reconexión
+
         230: "RECONNECTING",
         231: "RECONNECT_SUCCESS",
         
-        # Errores - Validación
         400: "BAD_REQUEST",
         401: "INVALID_MESSAGE_FORMAT",
         402: "MISSING_REQUIRED_FIELD",
         
-        # Errores - Jugador
         410: "PLAYER_NOT_FOUND",
-        411: "PLAYER_ALREADY_IN_GAME",
-        412: "INVALID_PLAYER_ID",
-        413: "PLAYER_NOT_READY",
         
-        # Errores - Juego
         420: "GAME_NOT_FOUND",
-        421: "GAME_NOT_STARTED",
         422: "GAME_ALREADY_FULL",
-        423: "GAME_OVER",
-        424: "INVALID_MOVE",
         
-        # Errores - Barcos
         430: "INVALID_SHIP_PLACEMENT",
-        431: "SHIP_OVERLAP",
-        432: "INVALID_SHIP_POSITION",
-        433: "ALL_SHIPS_REQUIRED",
         
-        # Errores - Ataque
         440: "INVALID_COORDINATE",
-        441: "COORDINATE_ALREADY_ATTACKED",
-        442: "NOT_YOUR_TURN",
         
-        # Errores - Conexión
         450: "OPPONENT_DISCONNECTED",
         451: "REQUEST_TIMEOUT",
-        452: "CONNECTION_ERROR",
         
-        # Errores - Servidor
-        500: "INTERNAL_SERVER_ERROR",
-        501: "DATABASE_ERROR",
+        500: "INTERNAL_SERVER_ERROR"
     }
 
     MESSAGE_TYPES = {
-        # Cliente -> Servidor
         "join_game",
         "reconnect",
         "place_ships",
@@ -84,7 +54,6 @@ class Protocol:
         "ping",
         "generate_random_placement",
         
-        # Servidor -> Cliente
         "game_state",
         "attack_result",
         "opponent_move",
@@ -165,11 +134,9 @@ class Protocol:
         Returns:
             Tupla (válido: bool, mensaje_error: str).
         """
-        # Verificar que sea un diccionario
         if not isinstance(data, dict):
             return False, "Mensaje debe ser un diccionario"
 
-        # Verificar campo type
         if "type" not in data:
             return False, "Campo 'type' es obligatorio"
 

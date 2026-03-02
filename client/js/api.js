@@ -1,13 +1,6 @@
-/**
- * API.js - Refactorizado para Arquitectura Reactiva
- * 
- * Cambios principales:
- * 1. NO validar localmente (todo lo valida el servidor)
- * 2. Enviar requests y esperar respuestas
- * 3. Los handlers de respuesta son MÍ NIMOS (solo renderizar)
- */
 
-console.log('[API] Módulo API cargado (REACTIVO)');
+
+console.log('[API] Módulo API cargado');
 
 const API = {
     get wsURL() {
@@ -35,20 +28,16 @@ const API = {
         console.log('[API] Inicializando cliente reactivo...');
         
         try {
-            // Verificar salud del servidor HTTP
             const healthResponse = await fetch(`${this.httpURL}/api/health`);
             if (!healthResponse.ok) throw new Error('Servidor HTTP no responde');
             console.log('[API] ✓ Servidor HTTP activo');
             
-            // Conectar WebSocket
             await this._connectWebSocket();
             console.log('[API] ✓ WebSocket conectado');
             
-            // Hacer ping
             await this._sendPing();
             console.log('[API] ✓ Ping exitoso');
             
-            // Verificar sesión
             this._checkSavedSession();
             
             return true;
@@ -198,10 +187,6 @@ const API = {
         }
     },
     
-    // ==============================================
-    // MÉTODOS DE JUEGO (cliente envía, servidor valida)
-    // ==============================================
-    
     /**
      * Unirse a una partida
      * El servidor responderá con game_state tipo 210/211
@@ -306,7 +291,6 @@ const API = {
                     
                     reject(new Error('Sesión expirada'));
                 }
-                // Error
                 else if (message.type === 'error') {
                     resolved = true;
                     clearTimeout(timeout);
@@ -425,7 +409,7 @@ const API = {
     },
     
     /**
-     * Rendirse
+     * Rendirse (no agregado al juego aun)
      */
     async surrender() {
         const sessionId = localStorage.getItem('sessionId');

@@ -5,7 +5,6 @@ Arquitectura con separación de responsabilidades:
 - BatallaNavalServer los envía (cómo)
 
 """
-
 import socket
 import threading
 import json
@@ -40,10 +39,6 @@ class OutgoingMessage:
     payload: Dict
 
 
-# ============================================================
-# UTILIDADES - GENERADOR DE POSICIONES VÁLIDAS
-# ============================================================
-
 def generate_valid_ship_placement(board_size: int = 10) -> Dict[str, list]:
     """
     Genera una disposición aleatoria válida de barcos sin solapamientos.
@@ -74,10 +69,9 @@ def generate_valid_ship_placement(board_size: int = 10) -> Dict[str, list]:
         'SUBMARINE': 2,
     }
     
-    occupied = set()  # Set de coordenadas ocupadas (x, y)
+    occupied = set()
     ships = []
     
-    # Intentar colocar cada barco
     for ship_type, length in ship_types.items():
         placed = False
         max_attempts = 100
@@ -86,27 +80,22 @@ def generate_valid_ship_placement(board_size: int = 10) -> Dict[str, list]:
         while not placed and attempts < max_attempts:
             attempts += 1
             
-            # Elegir orientación aleatoria
             orientation = random.choice(['HORIZONTAL', 'VERTICAL'])
-            
-            # Elegir posición aleatoria
             if orientation == 'HORIZONTAL':
                 max_x = board_size - length
                 start_x = random.randint(0, max_x)
                 start_y = random.randint(0, board_size - 1)
-            else:  # VERTICAL
+            else:
                 start_x = random.randint(0, board_size - 1)
                 max_y = board_size - length
                 start_y = random.randint(0, max_y)
             
-            # Generar posiciones
             positions = []
             if orientation == 'HORIZONTAL':
                 positions = [{'x': start_x + i, 'y': start_y} for i in range(length)]
             else:
                 positions = [{'x': start_x, 'y': start_y + i} for i in range(length)]
             
-            # Verificar solapamiento
             overlap = False
             for pos in positions:
                 if (pos['x'], pos['y']) in occupied:
@@ -114,7 +103,6 @@ def generate_valid_ship_placement(board_size: int = 10) -> Dict[str, list]:
                     break
             
             if not overlap:
-                # Marcar como ocupadas las posiciones del barco
                 for pos in positions:
                     occupied.add((pos['x'], pos['y']))
                 
@@ -126,19 +114,12 @@ def generate_valid_ship_placement(board_size: int = 10) -> Dict[str, list]:
                 placed = True
         
         if not placed:
-            # Si no se pudo colocar (muy pocas intentos), reintentar todo
             return generate_valid_ship_placement(board_size)
     
     return {'ships': ships}
 
 
-# ============================================================
-# GAMESESSION - LÓGICA DE PARTIDA
-# ============================================================
-
 class GameSession:
-
-    
     """
     Representa una sesión de juego independiente desde su creación hasta su fin.
     
@@ -159,16 +140,13 @@ class GameSession:
         self.logger = logging.getLogger("GameSession")
         self.session_id = session_id
         self.game = Game(board_size)
-        self.players: Dict[str, dict] = {}  # {player_id: {'socket': socket, 'name': str, 'connected': bool}}
+        self.players: Dict[str, dict] = {}
         
-        # Lock para evitar race conditions en place_ships
         self.ships_placement_lock = threading.Lock()
         
-        # Información de reconexión
         self.disconnected_player: Optional[str] = None
         self.reconnect_timeout: Optional[datetime] = None
         
-        # Timestamps
         self.created_at = datetime.now()
         self.started_at: Optional[datetime] = None
         self.finished_at: Optional[datetime] = None
@@ -176,10 +154,6 @@ class GameSession:
         self.is_active = True
         
         self.logger.info(f"[SESSION {self.session_id[:8]}] Sesión créada (reconexión timeout: {ServerConfig().TIMEOUT_RECONNECTION}s)")
-
-    # ============================================================
-    # MANEJO DE JUGADORES
-    # ============================================================
 
     def add_player(self, player_id: str, player_name: str, client_socket: socket.socket) -> Tuple[bool, List[OutgoingMessage]]:
         """
@@ -212,7 +186,6 @@ class GameSession:
             
             messages: List[OutgoingMessage] = []
             
-            # Primer jugador: esperando oponente
             if len(self.players) == 1:
                 msg = OutgoingMessage(
                     player_id,
@@ -228,7 +201,6 @@ class GameSession:
                 )
                 messages.append(msg)
             
-            # Segundo jugador: ambos listos
             elif len(self.players) == 2:
                 for pid, player_info in self.players.items():
                     other_player_id = self._get_other_player(pid)
@@ -272,10 +244,8 @@ class GameSession:
             Tupla (éxito: bool, mensajes: List[OutgoingMessage]).
             éxito es False si hay error en la colocación de barcos.
         """
-        # Lock para evitar condiciones de carrera si P1 y P2 colocan casi simultáneamente
         with self.ships_placement_lock:
             try:
-                # Convertir datos de entrada a objetos Ship
                 ships = []
                 for ship_data in ships_data:
                     orientation = ShipOrientation[ship_data['orientation'].upper()]
@@ -301,7 +271,6 @@ class GameSession:
                     )
                     ships.append(ship)
                 
-                # Colocar barcos en el juego
                 for ship in ships:
                     self.game.place_ship(player_id, ship)
 
@@ -310,11 +279,9 @@ class GameSession:
                 
                 messages: List[OutgoingMessage] = []
                 
-                # Verificar si ambos jugadores colocaron barcos
                 all_placed = self.game.all_ships_placed()
                 
                 if all_placed:
-                    # Iniciar juego
                     self.game.finish_ship_placement()
                     self.started_at = datetime.now()
                     self.logger.info(f"[SESSION {self.session_id[:8]}] Ambos jugadores listos, juego iniciado")
@@ -375,7 +342,7 @@ class GameSession:
                 else:
                     # Solo un jugador colocó, esperar al otro
                     other_player_id = self._get_other_player(player_id)
-                    if other_player_id:  # Verificar que existe otro jugador
+                    if other_player_id:
                         other_player_name = self.players[other_player_id]['name']
                         msg = OutgoingMessage(
                             player_id,
@@ -400,10 +367,6 @@ class GameSession:
                 self.logger.error(traceback.format_exc())
                 return False, []
 
-    # ============================================================
-    # LÓGICA DE ATAQUE
-    # ============================================================
-
     def execute_attack(self, attacker_id: str, coordinate_dict: dict) -> Tuple[bool, List[OutgoingMessage]]:
         """
         Ejecuta un ataque y genera todos los mensajes correspondientes.
@@ -423,7 +386,6 @@ class GameSession:
             éxito es False si el ataque es inválido.
         """
         try:
-            # Validar coordenada y ejecutar ataque
             coord = Coordinate(x=coordinate_dict['x'], y=coordinate_dict['y'])
             result = self.game.attack(attacker_id, coord)
             
@@ -433,13 +395,7 @@ class GameSession:
                     f"[SESSION {self.session_id[:8]}] Ataque de {attacker_id[:8]} a ({coord.x}, {coord.y}): {result.outcome.name}"
                 )
             
-            messages: List[OutgoingMessage] = []
-            
-            # =====================================================================
-            # MENSAJE 1: attack_result al ATACANTE
-            # =====================================================================
-            defender_name = self.players[defender_id]['name'] if defender_id in self.players else 'Desconocido'
-            
+            messages: List[OutgoingMessage] = []            
             attack_result_msg = OutgoingMessage(
                 attacker_id,
                 {
@@ -571,10 +527,6 @@ class GameSession:
                 'message': f"Error en ataque: {str(e)}"
             })]
 
-    # ============================================================
-    # RENDICIÓN
-    # ============================================================
-
     def handle_surrender(self, player_id: str) -> Tuple[bool, List[OutgoingMessage]]:
         """
         Maneja la rendición de un jugador.
@@ -623,10 +575,6 @@ class GameSession:
             self.logger.error(f"[SESSION {self.session_id[:8]}] Error en rendición: {e}")
             return False, []
 
-    # ============================================================
-    # RECONEXIÓN
-    # ============================================================
-
     def reconnect_player(self, player_id: str, client_socket: socket.socket) -> Tuple[bool, List[OutgoingMessage]]:
         """
         Reconecta un jugador después de una desconexión.
@@ -655,7 +603,6 @@ class GameSession:
             
             messages: List[OutgoingMessage] = []
             
-            # Enviar estado actual del juego al que se reconecta
             game_state = self.game.get_public_state_for(player_id)
             other_pid = self._get_other_player(player_id)
             other_name = self.players[other_pid]['name'] if other_pid else 'Desconocido'
@@ -674,7 +621,6 @@ class GameSession:
             )
             messages.append(reconnect_msg)
             
-            # Notificar al otro jugador
             if other_pid:
                 notification = OutgoingMessage(
                     other_pid,
@@ -710,7 +656,6 @@ class GameSession:
             self.players[player_id]['connected'] = False
             self.disconnected_player = player_id
             
-            # Usar timeout configurable desde ServerConfig
             timeout_seconds = int(ServerConfig().TIMEOUT_RECONNECTION)
             self.reconnect_timeout = datetime.now() + timedelta(seconds=timeout_seconds)
             
@@ -721,7 +666,6 @@ class GameSession:
             
             messages: List[OutgoingMessage] = []
             
-            # Notificar al otro jugador
             other_id = self._get_other_player(player_id)
             if other_id:
                 notification = OutgoingMessage(
@@ -772,7 +716,6 @@ class GameSession:
             
             messages: List[OutgoingMessage] = []
             
-            # Mensaje para el ganador (jugador conectado)
             if winner_id and self.players[winner_id]['connected']:
                 game_over_payload = {
                     'type': 'game_over',
@@ -786,8 +729,6 @@ class GameSession:
                 }
                 messages.append(OutgoingMessage(winner_id, game_over_payload))
             
-            # Mensaje especial para el que se quedó desconectado
-            # Se envía cuando intente reconectar, pero lo detectará cuando valide la sesión
             disconnected_msg = {
                 'type': 'game_over',
                 'code': 220,
@@ -801,13 +742,9 @@ class GameSession:
             }
             messages.append(OutgoingMessage(loser_id, disconnected_msg))
             
-            return True, messages  # True = la sesión debe cerrarse
+            return True, messages
         
-        return False, []  # False = sesión sigue activa
-
-    # ============================================================
-    # UTILIDADES
-    # ============================================================
+        return False, []
 
     def _get_other_player(self, player_id: str) -> Optional[str]:
         """
@@ -855,10 +792,6 @@ class GameSession:
         return f"GameSession({self.session_id[:8]}, players={len(self.players)}, state={self.game.state.name})"
 
 
-# ============================================================
-# BATALLANAVALSERVER - COORDINADOR DE CONEXIONES
-# ============================================================
-
 class BatallaNavalServer:
     """
     Servidor de WebSocket que coordina múltiples GameSessions de forma concurrente.
@@ -895,7 +828,6 @@ class BatallaNavalServer:
         self.server_socket = None
         self.running = False
         
-        # Thread de limpieza automática
         self.cleanup_thread = None
         self.cleanup_running = False
 
@@ -924,7 +856,6 @@ class BatallaNavalServer:
             
             self.running = True
             
-            # Iniciar thread de limpieza automática
             self.cleanup_running = True
             self.cleanup_thread = threading.Thread(
                 target=self._cleanup_loop,
@@ -978,7 +909,6 @@ class BatallaNavalServer:
             except:
                 pass
         
-        # Esperar a que el thread de limpieza se detenga
         if self.cleanup_thread:
             try:
                 self.cleanup_thread.join(timeout=5)
@@ -986,10 +916,6 @@ class BatallaNavalServer:
                 pass
         
         self.logger.info("Servidor detenido")
-
-    # ============================================================
-    # LIMPIEZA AUTOMÁTICA DE SESIONES
-    # ============================================================
 
     def _cleanup_loop(self):
         """
@@ -1010,29 +936,23 @@ class BatallaNavalServer:
                 if not self.cleanup_running:
                     break
                 
-                # Verificar todos los juegos activos
                 sessions_to_remove = []
                 for session_id, session in list(self.sessions.items()):
-                    # 1. Verificar timeout de reconexión
                     should_close, messages = session.check_reconnection_timeout()
                     
                     if should_close:
                         self.logger.warning(
                             f"[SESSION {session_id[:8]}] Cerrando sesión por timeout de reconexión"
                         )
-                        # Enviar mensajes pendientes
                         self._send_messages(session, messages)
                         sessions_to_remove.append(session_id)
                     
                     elif messages:
-                        # Enviar mensajes pendientes (aunque no se cierre la sesión)
                         self._send_messages(session, messages)
                     
-                    # 2. Verificar sesiones inactivas (nunca conectadas)
                     now = datetime.now()
                     time_since_creation = (now - session.created_at).total_seconds()
                     
-                    # Si ha pasado el timeout y no se conectó el segundo jugador
                     if (len(session.players) == 1 and 
                         time_since_creation > int(ServerConfig().TIMEOUT_WAITING_FOR_OPPONENT)):
                         self.logger.warning(
@@ -1041,7 +961,6 @@ class BatallaNavalServer:
                         )
                         sessions_to_remove.append(session_id)
                 
-                # Remover sesiones cerradas
                 for session_id in sessions_to_remove:
                     self._remove_session(session_id)
                     
@@ -1062,12 +981,10 @@ class BatallaNavalServer:
         
         session = self.sessions[session_id]
         
-        # Limpiar mapeos de jugadores
         for player_id in session.players:
             if player_id in self.player_to_session:
                 del self.player_to_session[player_id]
         
-        # Limpiar mapeos de sockets
         sockets_to_remove = []
         for sock, pid in list(self.socket_to_player.items()):
             if pid in session.players:
@@ -1079,14 +996,9 @@ class BatallaNavalServer:
             if sock in self.socket_to_session:
                 del self.socket_to_session[sock]
         
-        # Eliminar sesión
         del self.sessions[session_id]
         
         self.logger.info(f"[SESSION {session_id[:8]}] Sesión eliminada del servidor")
-
-    # ============================================================
-    # MANEJO DE CLIENTE
-    # ============================================================
 
     def _handle_client(self, client_socket: socket.socket, client_address: Tuple):
         """
@@ -1156,10 +1068,6 @@ class BatallaNavalServer:
         finally:
             self._cleanup_client(client_socket, player_id, session_id)
 
-    # ============================================================
-    # HANDLERS DE MENSAJES
-    # ============================================================
-
     def _handle_join_game(self, client_socket: socket.socket, data: dict) -> Tuple[Optional[str], Optional[str]]:
         """
         Maneja cuando un cliente se une a una partida.
@@ -1184,14 +1092,12 @@ class BatallaNavalServer:
             player_id = str(uuid.uuid4())
             player_name = data.get('playerName', f"Unknown_{player_id[:5]}")
             
-            # Buscar sesión disponible
             available_session = None
             for sess in self.sessions.values():
                 if not sess.is_full() and sess.game.state == GameState.WAITING_FOR_PLAYERS:
                     available_session = sess
                     break
             
-            # Si no hay, crear una nueva
             if available_session is None:
                 session_id = str(uuid.uuid4())
                 available_session = GameSession(session_id)
@@ -1200,18 +1106,15 @@ class BatallaNavalServer:
             else:
                 session_id = available_session.session_id
             
-            # Añadir jugador a la sesión
             success, messages = available_session.add_player(player_id, player_name, client_socket)
             if not success:
                 self._send_error(client_socket, 422, "No se pudo añadir el jugador")
                 return None, None
             
-            # Guardar mapeos
             self.player_to_session[player_id] = session_id
             self.socket_to_player[client_socket] = player_id
             self.socket_to_session[client_socket] = session_id
             
-            # Enviar mensajes generados por GameSession
             self._send_messages(available_session, messages)
             
             return player_id, session_id
@@ -1251,7 +1154,6 @@ class BatallaNavalServer:
                 return None, None
             
             if session_id not in self.sessions:
-                # Sesión no existe o fue eliminada por timeout
                 self.logger.warning(f"Intento de reconexión a sesión inexistente: {session_id[:8]}")
                 error_response = {
                     'type': 'game_over',
@@ -1280,17 +1182,14 @@ class BatallaNavalServer:
                 self._send_message(client_socket, error_response)
                 return None, None
             
-            # Reconectar
             success, messages = session.reconnect_player(player_id, client_socket)
             if not success:
                 self._send_error(client_socket, 420, "Error en reconexión")
                 return None, None
             
-            # Actualizar mapeos
             self.socket_to_player[client_socket] = player_id
             self.socket_to_session[client_socket] = session_id
             
-            # Enviar mensajes
             self._send_messages(session, messages)
             
             self.logger.info(f"[SESSION {session_id[:8]}] Jugador {player_id[:8]} reconectado")
@@ -1332,14 +1231,12 @@ class BatallaNavalServer:
             session = self.sessions[session_id]
             ships_data = data.get('ships', [])
             
-            # GameSession genera los mensajes
             success, messages = session.place_ships(player_id, ships_data)
             
             if not success:
                 self._send_error(client_socket, 430, "Error colocando barcos")
                 return
             
-            # Enviar mensajes
             self._send_messages(session, messages)
             
         except Exception as e:
@@ -1376,16 +1273,14 @@ class BatallaNavalServer:
 
             session = self.sessions[session_id]
             coordinate = data.get('coordinate')
-            if not coordinate: return #Solo para evitar que el editor marque error
+            if not coordinate: return
             
-            # GameSession genera los mensajes
             success, messages = session.execute_attack(player_id, coordinate)
             
             if not success:
                 self._send_error(client_socket, 440, "Ataque inválido")
                 return
             
-            # Enviar mensajes
             self._send_messages(session, messages)
             
         except Exception as e:
@@ -1417,14 +1312,12 @@ class BatallaNavalServer:
 
             session = self.sessions[session_id]
             
-            # GameSession genera los mensajes
             success, messages = session.handle_surrender(player_id)
             
             if not success:
                 self._send_error(client_socket, 500, "Error en rendición")
                 return
             
-            # Enviar mensajes
             self._send_messages(session, messages)
             
         except Exception as e:
@@ -1444,15 +1337,12 @@ class BatallaNavalServer:
         try:
             board_size = data.get('boardSize', 10)
             
-            # Validar board_size
             if not isinstance(board_size, int) or board_size < 5:
                 self._send_error(client_socket, 403, "boardSize inválido")
                 return
             
-            # Generar disposición válida
             placement = generate_valid_ship_placement(board_size)
             
-            # Enviar respuesta al cliente
             response = {
                 'type': 'random_placement',
                 'code': 250,
@@ -1464,10 +1354,6 @@ class BatallaNavalServer:
         except Exception as e:
             self.logger.error(f"Error generando disposición aleatoria: {e}")
             self._send_error(client_socket, 500, "Error al generar disposición")
-
-    # ============================================================
-    # ENVÍO DE MENSAJES
-    # ============================================================
 
     def _send_messages(self, session: GameSession, messages: List[OutgoingMessage]):
         """
@@ -1517,10 +1403,6 @@ class BatallaNavalServer:
         error_msg = self.protocol.create_error(code, message)
         self._send_message(client_socket, error_msg)
 
-    # ============================================================
-    # LIMPIEZA
-    # ============================================================
-
     def _cleanup_client(self, client_socket: socket.socket, player_id: Optional[str], 
                        session_id: Optional[str]):
         """
@@ -1543,23 +1425,17 @@ class BatallaNavalServer:
         if player_id and session_id and session_id in self.sessions:
             session = self.sessions[session_id]
             
-            # Generar mensajes de desconexión
             messages = session.mark_player_disconnected(player_id)
             self._send_messages(session, messages)
             
             self.logger.warning(f"[SESSION {session_id[:8]}] Jugador {player_id[:8]} desconectado")
 
-        # Limpiar mapeos
         if client_socket in self.socket_to_player:
             del self.socket_to_player[client_socket]
         if client_socket in self.socket_to_session:
             del self.socket_to_session[client_socket]
         if player_id and player_id in self.player_to_session:
             del self.player_to_session[player_id]
-
-    # ============================================================
-    # WEBSOCKET HANDSHAKE Y FRAMES
-    # ============================================================
 
     def _websocket_handshake(self, client_socket: socket.socket, request: str) -> bool:
         """
@@ -1646,7 +1522,6 @@ class BatallaNavalServer:
                 return None
                     
 
-            # Extended payload length
             if payload_length == 126:
                 if len(data) < index + 2:
                     self.logger.warning("Frame con payload length 126 pero datos insuficientes")
@@ -1660,7 +1535,6 @@ class BatallaNavalServer:
                 payload_length = int.from_bytes(data[index:index+8], 'big')
                 index += 8
 
-            # Control frames
             if opcode == 8:  # Close
                 return None
 
@@ -1693,7 +1567,6 @@ class BatallaNavalServer:
                 try:
                     return payload.decode('utf-8')
                 except UnicodeDecodeError as e:
-                    # Log detallado para debug
                     self.logger.error(
                         f"UnicodeDecodeError al decodificar payload: {e}\n"
                         f"Payload length: {len(payload)} bytes\n"
@@ -1701,14 +1574,13 @@ class BatallaNavalServer:
                         f"Masking key: {masking_key.hex()}\n"
                         f"Opcode: {opcode}"
                     )
-                    # Intentar recuperar usando replacement chars
                     try:
                         return payload.decode('utf-8', errors='replace')
                     except Exception as inner_e:
                         self.logger.error(f"Falló recuperación con errors='replace': {inner_e}")
                         return None
 
-            # Si llega binario y no lo usas
+            # Si llega binario
             self.logger.warning(f"Recibido frame con opcode {opcode} no soportado")
             return None
 

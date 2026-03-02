@@ -28,22 +28,18 @@ from .errors import (
 )
 
 __all__ = [
-    # Classes
     "Ship",
     "Coordinate",
     "Board",
     "Player",
     "Game",
-    # Enums
     "CellState",
     "AttackOutcome",
     "GameState",
     "ShipType",
     "ShipOrientation",
-    # Results
     "AttackResult",
     "GameOverResult",
-    # Exceptions
     "BattleshipGameError",
     "InvalidCoordinateError",
     "ShipPlacementError",

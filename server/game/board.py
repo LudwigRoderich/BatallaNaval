@@ -30,7 +30,6 @@ class Board:
         self._ships: Dict[str, Ship] = {}
         self._attacked_coords: set[Coordinate] = set()
 
-        # Initialize all cells as empty
         for x in range(size):
             for y in range(size):
                 self._cells[Coordinate(x, y)] = CellState.EMPTY
@@ -112,34 +111,29 @@ class Board:
             ShipPlacementError: If ship coordinates are invalid for its type/orientation,
                 or if a ship of this type is already placed on the board.
         """
-        # Validate all positions
         for coord in ship.positions:
             if not self.is_valid_coordinate(coord):
                 raise InvalidCoordinateError(
                     f"Ship position {coord} is out of bounds."
                 )
 
-        # Check for overlaps
         for coord in ship.positions:
             if self._cells[coord] == CellState.SHIP:
                 raise ShipOverlapError(
                     f"Cannot place ship '{ship.ship_id}': overlap at {coord}."
                 )
             
-        # Validate ship coordinates based on its type (for its lenght) and orientation
         if not self.are_coordinates_valid_for_ship(ship):
             raise ShipPlacementError(
                 f"Ship '{ship.ship_id}' has invalid coordinates for its type {ship.ship_type.name}."
             )
 
-        # Check if that type of ship is already placed (only one per type allowed)
         for existing_ship in self._ships.values():
             if existing_ship.ship_type == ship.ship_type:
                 raise ShipPlacementError(
                     f"Ship of type '{ship.ship_type.name}' is already placed on the board."
                 )
 
-        # Place the ship
         self._ships[ship.ship_id] = ship
         for coord in ship.positions:
             self._cells[coord] = CellState.SHIP
@@ -271,13 +265,10 @@ class Board:
         if len(coords) != ship.ship_type.length:
             return False
         
-        #print(f"Validating ship of type {ship.ship_type.name} with coordinates: {coords} and orientation {ship._orientation.name}")
         if ship._orientation == ShipOrientation.HORIZONTAL:
-            # Verify that all y coordinates are the same and x coordinates are consecutive
             return all(coord.y == coords[0].y for coord in coords) and \
                    all(coords[i].x == coords[0].x + i for i in range(len(coords)))
         elif ship._orientation == ShipOrientation.VERTICAL:
-            # Verify that all x coordinates are the same and y coordinates are consecutive
             return all(coord.x == coords[0].x for coord in coords) and \
                    all(coords[i].y == coords[0].y + i for i in range(len(coords)))
         else:

@@ -1,18 +1,4 @@
-/**
- * ARQUITECTURA REFACTORIZADA: Cliente Reactivo
- * 
- * Principios:
- * 1. El cliente NUNCA toma decisiones de lógica
- * 2. El cliente SIEMPRE pregunta al servidor
- * 3. El cliente está en escucha PERPETUA de mensajes
- * 4. El cliente NO maneja timers
- * 5. El cliente solo renderiza lo que el servidor le dice
- */
 
-
-// ============================================
-// INICIALIZACIÓN GLOBAL
-// ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('=== BATALLA NAVAL INICIANDO (ARQUITECTURA REACTIVA) ===');
@@ -48,19 +34,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// ============================================
-// SISTEMA DE HANDLERS: EL CORAZÓN REACTIVO
-// ============================================
-
 /**
  * Handlers GLOBALES que escuchan PERPETUAMENTE
  * El cliente NUNCA toma iniciativa, siempre responde a lo que el servidor dice
  */
 function setupGlobalMessageHandlers() {
     
-    // ==============================================
-    // ESTADO DEL JUEGO (game_state) - LA FUENTE DE VERDAD
-    // ==============================================
     API.on('game_state', (message) => {
         console.log('[HANDLERS] game_state recibido:', {code: message.code, state: message.state});
         console.log('Mensaje completo:', message);
@@ -68,9 +47,6 @@ function setupGlobalMessageHandlers() {
         // Guardar nombres del mensaje
         if (message.playerName) GameState.playerName = message.playerName;
         if (message.opponentName) GameState.opponentName = message.opponentName;
-        
-        // El servidor nos dice qué pantalla mostrar y qué hacer
-        // NO hay lógica local, solo reaccionar
         
         switch(message.code) {
             case 210: // WAITING_FOR_OPPONENT
@@ -108,7 +84,6 @@ function setupGlobalMessageHandlers() {
                 Renderer.addLogEntry('¡Es tu turno!', 'info');
                 Renderer.enableAttackBoard(true);
                 
-                // Actualizar contadores de barcos si vienen en el mensaje
                 if (message.yourShipsRemaining !== undefined && message.enemyShipsRemaining !== undefined) {
                     Renderer.updateShipsRemaining(message.yourShipsRemaining, message.enemyShipsRemaining);
                 }
@@ -119,7 +94,6 @@ function setupGlobalMessageHandlers() {
                 Renderer.addLogEntry(`Turno de ${message.opponentName}`, 'info');
                 Renderer.enableAttackBoard(false);
                 
-                // Actualizar contadores de barcos si vienen en el mensaje
                 if (message.yourShipsRemaining !== undefined && message.enemyShipsRemaining !== undefined) {
                     Renderer.updateShipsRemaining(message.yourShipsRemaining, message.enemyShipsRemaining);
                 }
@@ -148,30 +122,22 @@ function setupGlobalMessageHandlers() {
         }
     });
     
-    // ==============================================
-    // RESULTADO DE ATAQUE (Lo que nosotros atacamos)
-    // ==============================================
+    
     API.on('attack_result', (message) => {
         console.log('[HANDLERS] attack_result recibido:', {x: message.x, y: message.y, outcome: message.outcome});
         
         const {x, y, outcome, shipSunk} = message;
         
-        // ✅ Incrementar contador de movimientos
         GameState.game.moveCount++;
         Renderer.updateMoveCount(GameState.game.moveCount);
         
-        // ✅ Actualizar estado del juego
         GameState.updateAttackCell(x, y, outcome.toLowerCase());
         
-        // ✅ Guardar attackBoard en localStorage para recuperación posterior
         localStorage.setItem('attackBoard', JSON.stringify(GameState.game.attackBoard));
         
-        // ✅ Renderizar en tablero de ataque
         const cellState = outcome === 'MISS' ? 'miss' : outcome === 'HIT' ? 'hit' : 'sunk';
         Renderer.updateCell('attack-board', x, y, cellState);
         Renderer.animateAttack('attack-board', x, y, outcome === 'HIT' || outcome === 'SHIP_SUNK');
-        
-        // ✅ Log de combate
         switch(outcome) {
             case 'HIT':
                 Renderer.addLogEntry(`¡Acierto en ${API.formatCoordinate(x, y)}!`, 'hit');
@@ -184,31 +150,24 @@ function setupGlobalMessageHandlers() {
                 break;
         }
         
-        // ✅ Deshabilitar tablero - esperando next game_state
         Renderer.enableAttackBoard(false);
         console.log('[HANDLERS] ✓ attack_result renderizado');
     });
     
-    // ==============================================
-    // ATAQUE DEL OPONENTE (El oponente nos ataca)
-    // ==============================================
+  
     API.on('opponent_attack', (message) => {
         console.log('[HANDLERS] opponent_attack recibido:', {x: message.x, y: message.y, outcome: message.outcome, opponentName: message.opponentName});
         
         const {x, y, outcome, shipSunk, opponentName} = message;
         
-        // ✅ Actualizar estado del juego
         GameState.updateDefenseCell(x, y, outcome.toLowerCase());
         
-        // ✅ Guardar defenseBoard en localStorage para recuperación posterior
         localStorage.setItem('defenseBoard', JSON.stringify(GameState.game.defenseBoard));
         
-        // ✅ Renderizar en tablero de defensa
         const cellState = outcome === 'MISS' ? 'miss' : outcome === 'HIT' ? 'hit' : 'sunk';
         Renderer.updateCell('defense-board', x, y, cellState);
         Renderer.animateAttack('defense-board', x, y, outcome === 'HIT' || outcome === 'SHIP_SUNK');
         
-        // ✅ Log de combate
         switch(outcome) {
             case 'HIT':
                 Renderer.addLogEntry(`¡${opponentName || 'Oponente'} golpeó en ${API.formatCoordinate(x, y)}!`, 'warning');
@@ -224,9 +183,7 @@ function setupGlobalMessageHandlers() {
         console.log('[HANDLERS] ✓ opponent_attack renderizado');
     });
     
-    // ==============================================
-    // NOTIFICACIONES (solo informativas)
-    // ==============================================
+    
     API.on('notification', (message) => {
         console.log('[HANDLERS] notification:', message.message, 'code:', message.code);
         Renderer.addLogEntry(message.message, 'notification');
@@ -249,9 +206,7 @@ function setupGlobalMessageHandlers() {
         }
     });
     
-    // ==============================================
-    // ERRORES
-    // ==============================================
+   
     API.on('error', (message) => {
         console.error('[HANDLERS] error del servidor:', message.message);
         Renderer.addLogEntry(`Error: ${message.message}`, 'error');
@@ -303,9 +258,6 @@ function setupGlobalEventListeners() {
     });
 }
 
-// ============================================
-// PANTALLA DE INICIO
-// ============================================
 
 function setupStartScreen() {
     const nameInput = document.getElementById('player-name');
@@ -347,7 +299,6 @@ async function handleJoinGame() {
             if(result.state == 'WAITING_FOR_PLAYERS'){
                 Renderer.showWaitingForOpponent(playerName);
             }
-            // El resto lo maneja el handler de game_state cuando llegue
         } else {
             showError('Error al unirse a la partida');
             joinBtn.disabled = false;
@@ -360,9 +311,7 @@ async function handleJoinGame() {
     }
 }
 
-// ============================================
-// PANTALLA DE COLOCACIÓN
-// ============================================
+
 
 function setupPlacementScreen() {
     console.log('[SETUP] Configurando pantalla de colocación');
@@ -459,7 +408,6 @@ function setupPlacementScreen() {
         Renderer.placeShipOnBoard('placement-board', positions, selectedShip.type);
         Renderer.renderShipsList(GameState.placement.ships);
         
-        // ✅ Deseleccionar barco después de colocarlo
         GameState.selectShip(null);
         document.querySelectorAll('.ship-item').forEach(s => s.classList.remove('selected'));
         Renderer.clearShipPreview('placement-board');
@@ -470,57 +418,45 @@ function setupPlacementScreen() {
         const originalText = randomBtn.innerHTML;
         randomBtn.addEventListener('click', async () => {
             try {
-                // Deshabilitar botón mientras se espera respuesta del servidor
                 randomBtn.disabled = true;
                 
                 randomBtn.innerHTML = '<span>GENERANDO...</span>';
                 
-                // Solicitar disposición válida al servidor
                 const result = await API.generateRandomPlacement();
                 
                 if (result.success) {
-                    // Limpiar tablero y resetear estado
                     Renderer.clearAllBoards();
                     GameState.resetPlacement();
                     
-                    // Colocar cada barco del servidor
                     result.ships.forEach(ship => {
-                        // Agregar a barcos colocados
                         GameState.placement.placedShips.push(ship);
                         
-                        // Marcar barco como colocado en la lista de definiciones
                         const shipDef = GameState.placement.ships.find(s => s.type === ship.type);
                         if (shipDef) {
                             shipDef.placed = true;
                             shipDef.orientation = ship.orientation;
                         }
                         
-                        // Renderizar en el tablero
                         Renderer.placeShipOnBoard('placement-board', ship.positions, ship.type);
                     });
                     
-                    // Actualizar lista de barcos
                     Renderer.renderShipsList(GameState.placement.ships);
                     
-                    // ✅ Deseleccionar barco después de colocar
                     GameState.selectShip(null);
                     document.querySelectorAll('.ship-item').forEach(s => s.classList.remove('selected'));
                     Renderer.clearShipPreview('placement-board');
                     
-                    // Feedback visual
                     showWarning(`✓ ${result.ships.length} barcos posicionados sin solapamientos`);
                 }
             } catch (error) {
                 showError(`Error generando disposición: ${error.message}`);
             } finally {
-                // Reactivar botón
                 randomBtn.disabled = false;
                 randomBtn.innerHTML = originalText;
             }
         });
     }
     
-    // Confirmar (enviar al servidor)
     if (confirmBtn) {
         confirmBtn.addEventListener('click', handleConfirmPlacement);
     }
@@ -543,7 +479,6 @@ async function handleConfirmPlacement() {
         
         await API.submitShipPlacement(GameState.placement.placedShips);
         // El servidor responderá con game_state, que disparará el handler
-        // NO hacemos nada aquí, solo esperar
     } catch (error) {
         showError(error.message);
         confirmBtn.disabled = false;
@@ -551,14 +486,10 @@ async function handleConfirmPlacement() {
     }
 }
 
-// ============================================
-// PANTALLA DE JUEGO
-// ============================================
 
 function setupGameScreen() {
     console.log('[SETUP] Configurando pantalla de juego');
     
-    // ✅ Inicializar tableros si no existen
     if (!GameState.game.defenseBoard || GameState.game.defenseBoard.length === 0) {
         GameState.game.defenseBoard = Array(GameState.boardSize).fill(null).map(() => 
             Array(GameState.boardSize).fill('empty')
@@ -571,27 +502,22 @@ function setupGameScreen() {
         );
     }
     
-    // ✅ Renderizar tableros
     Renderer.renderBoard('defense-board', GameState.boardSize, false);
     Renderer.renderBoard('attack-board', GameState.boardSize, true);
     
-    // ✅ Actualizar nombres
     const playerNameEl = document.getElementById('game-player-name');
     const opponentNameEl = document.getElementById('game-opponent-name');
     if (playerNameEl) playerNameEl.textContent = GameState.playerName;
     if (opponentNameEl) opponentNameEl.textContent = GameState.opponentName;
     
-    // ✅ Mostrar barcos propios en tablero de defensa
     GameState.placement.placedShips.forEach(ship => {
         Renderer.placeShipOnBoard('defense-board', ship.positions, ship.type);
     });
     
-    // ✅ Recuperar ataques recibidos si existe defenseBoard guardado en localStorage
     const savedDefenseBoard = localStorage.getItem('defenseBoard');
     if (savedDefenseBoard) {
         try {
             GameState.game.defenseBoard = JSON.parse(savedDefenseBoard);
-            // Renderizar los ataques recibidos
             for (let y = 0; y < GameState.boardSize; y++) {
                 for (let x = 0; x < GameState.boardSize; x++) {
                     const cellState = GameState.game.defenseBoard[y][x];
@@ -605,7 +531,6 @@ function setupGameScreen() {
         }
     }
     
-    // ✅ Recuperar ataques realizados si existe attackBoard guardado en localStorage
     const savedAttackBoard = localStorage.getItem('attackBoard');
     if (savedAttackBoard) {
         try {
@@ -624,10 +549,8 @@ function setupGameScreen() {
         }
     }
     
-    // ✅ Handler para ataques
     const attackBoard = document.getElementById('attack-board');
     if (attackBoard) {
-        // Remover listeners antiguos si existen
         attackBoard.replaceWith(attackBoard.cloneNode(true));
         const newAttackBoard = document.getElementById('attack-board');
         if (newAttackBoard) {
@@ -635,16 +558,14 @@ function setupGameScreen() {
         }
     }
     
-    // ✅ Handler para rendición
+    //No implementado aun
     const surrenderBtn = document.getElementById('btn-surrender');
     if (surrenderBtn) {
         surrenderBtn.addEventListener('click', handleSurrender);
     }
     
-    // ✅ Preparar log de combate
     const combatLog = document.getElementById('combat-log');
     if (combatLog) {
-        // Si hay un log guardado, cargarlo. Si no, iniciar vacío.
         const savedLog = localStorage.getItem('combatLog');
         if (savedLog) {
             Renderer.loadCombatLog();
@@ -653,8 +574,7 @@ function setupGameScreen() {
         }
     }
     
-    // ✅ Log inicial (solo mensaje de inicio, los de turno vienen del handler global)
-    Renderer.addLogEntry('⚔️ ¡Juego iniciado!', 'info');
+    Renderer.addLogEntry(' ¡Juego iniciado!', 'info');
     
     console.log('[SETUP] ✓ Pantalla de juego configurada');
 }
@@ -663,8 +583,6 @@ async function handleAttackClick(e) {
     const cell = e.target.closest('.cell');
     if (!cell) return;
     
-    // NO VALIDAR SI ES TURNO - dejar que el servidor lo rechace
-    // El cliente solo envía, el servidor decide
     
     const x = parseInt(cell.dataset.x);
     const y = parseInt(cell.dataset.y);
@@ -680,8 +598,6 @@ async function handleAttackClick(e) {
     
     try {
         const result = await API.sendAttack({x, y});
-        // El servidor responderá con attack_result y game_state
-        // NO hacemos nada aquí
     } catch (error) {
         showError(error.message);
     } finally {
@@ -689,8 +605,8 @@ async function handleAttackClick(e) {
     }
 }
 
+//No implementado aun
 async function handleSurrender() {
-    // Confirmación antes de rendirse
     if (!confirm('¿Estás seguro de que quieres rendirte? Perderás la partida.')) {
         return;
     }
@@ -701,8 +617,6 @@ async function handleSurrender() {
     
     try {
         await API.surrender();
-        // El servidor responderá con game_over
-        // El handler global lo procesará
     } catch (error) {
         showError(`Error en rendición: ${error.message}`);
         surrenderBtn.disabled = false;
@@ -710,9 +624,6 @@ async function handleSurrender() {
     }
 }
 
-// ============================================
-// FIN DE JUEGO
-// ============================================
 
 function endGame(server_message) {
     const isVictory = server_message.winner === server_message.playerId;
@@ -762,7 +673,6 @@ function endGame(server_message) {
 }
 
 function showGameOverStats(server_message, isVictory, stats) {
-    // ✅ Limpiar TODOS los datos de sesión activa al terminar
     localStorage.removeItem('playerId');
     localStorage.removeItem('sessionId');
     localStorage.removeItem('placedShips');
@@ -771,10 +681,8 @@ function showGameOverStats(server_message, isVictory, stats) {
     localStorage.removeItem('attackBoard');
     sessionStorage.clear();
 
-    // ✅ Cambiar a pantalla de game over
     GameState.switchScreen(GameState.SCREEN_GAMEOVER);
 
-    // ✅ Obtener elementos
     const title         = document.getElementById('gameover-title');
     const subtitle      = document.getElementById('gameover-subtitle');
     const winnerName    = document.getElementById('winner-name');
@@ -782,7 +690,6 @@ function showGameOverStats(server_message, isVictory, stats) {
     const accuracyEl    = document.getElementById('accuracy');
     const ships_remaining    = document.getElementById('ships-remaining');
 
-    // ✅ Actualizar contenido básico
     if (title) {
         title.textContent = isVictory ? '¡VICTORIA!' : 'DERROTA';
         title.className   = isVictory ? 'gameover-title victory' : 'gameover-title defeat';
@@ -798,7 +705,6 @@ function showGameOverStats(server_message, isVictory, stats) {
         winnerName.textContent = isVictory ? server_message.playerName : server_message.opponentName;
     }
 
-    // ✅ Estadísticas adicionales
     if (totalMovesEl) {
         totalMovesEl.textContent = stats.total_moves != null ? stats.total_moves : '0';
     }
@@ -811,13 +717,11 @@ function showGameOverStats(server_message, isVictory, stats) {
         ships_remaining.textContent = stats.ships_remaining || 'Sin Sobrevivientes...';
     }
 
-    // ✅ Mostrar log final
     Renderer.addLogEntry(
-        isVictory ? '🎉 ¡Ganaste la partida!' : '💔 Perdiste la partida',
+        isVictory ? '¡Ganaste la partida!' : 'Perdiste la partida',
         isVictory ? 'success' : 'danger'
     );
 
-    // ✅ Agregar botón de jugar de nuevo
     const playAgainBtn = document.getElementById('btn-play-again');
     if (playAgainBtn) {
         playAgainBtn.onclick = () => {
@@ -827,7 +731,6 @@ function showGameOverStats(server_message, isVictory, stats) {
         };
     }
 
-    // ✅ Limpiar eventos del tablero
     const attackBoard = document.getElementById('attack-board');
     if (attackBoard) {
         attackBoard.style.pointerEvents = 'none';
@@ -846,10 +749,6 @@ function setupGameOverScreen() {
         });
     }
 }
-
-// ============================================
-// RECONEXIÓN Y SESIÓN
-// ============================================
 
 async function handleSessionRestored() {
     console.log('[MAIN] Restaurando sesión');
@@ -938,7 +837,6 @@ function restoreGameStateFromServer(message) {
                 if (GameState.placement.placedShips.length > 0) {
                     GameState.placement.placedShips.forEach(ship => {
                         Renderer.placeShipOnBoard('placement-board', ship.positions, ship.type);
-                        // Marcar como colocado
                         const shipDef = GameState.placement.ships.find(s => s.type === ship.type);
                         if (shipDef) shipDef.placed = true;
                     });
@@ -1049,9 +947,7 @@ function handleSessionExpired(reason) {
     );
 }
 
-// ============================================
-// UTILIDADES
-// ============================================
+
 
 function calculateShipPositions(startX, startY, length, orientation) {
     const positions = [];

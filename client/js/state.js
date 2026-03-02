@@ -3,10 +3,7 @@
  */
 
 const GameState = {
-    // ============================================================
-    // CONSTANTES DE ESTADO
-    // ============================================================
-    
+ 
     // Estados de pantalla
     SCREEN_START: 'start',
     SCREEN_PLACEMENT: 'placement',
@@ -24,11 +21,7 @@ const GameState = {
     SERVER_STATE_IN_PROGRESS: 'IN_PROGRESS',
     SERVER_STATE_FINISHED: 'FINISHED',
     
-    // ============================================================
-    // ESTADO PERSISTENT (localStorage)
-    // ============================================================
     
-    // IDs de sesión (DEBE estar en localStorage)
     get playerId() {
         return localStorage.getItem('playerId');
     },
@@ -45,11 +38,6 @@ const GameState = {
         else localStorage.removeItem('sessionId');
     },
     
-    // ============================================================
-    // ESTADO SESSION (sessionStorage)
-    // ============================================================
-    
-    // Pantalla actual
     get currentScreen() {
         return sessionStorage.getItem('currentScreen') || this.SCREEN_START;
     },
@@ -57,7 +45,6 @@ const GameState = {
         sessionStorage.setItem('currentScreen', value);
     },
     
-    // Game state del servidor
     get gameState() {
         return sessionStorage.getItem('gameState') || this.SERVER_STATE_WAITING_FOR_PLAYERS;
     },
@@ -65,7 +52,6 @@ const GameState = {
         sessionStorage.setItem('gameState', value);
     },
     
-    // Datos del jugador
     get playerName() {
         return sessionStorage.getItem('playerName') || 'Comandante';
     },
@@ -82,11 +68,6 @@ const GameState = {
     
     boardSize: 10,
     
-    // ============================================================
-    // DATOS EN MEMORIA (session)
-    // ============================================================
-    
-    // Posicionamiento de barcos
     placement: {
         selectedShip: null,
         orientation: 'HORIZONTAL',
@@ -113,16 +94,12 @@ const GameState = {
         combatLog: []
     },
     
-    //Temporizador de juego
     gameTimer: {
         startTime: null,
         endTime: null
     },
     
-    // ============================================================
-    // MÉTODOS PRINCIPALES
-    // ============================================================
-    
+
     /**
      * Inicializa el estado del juego
      * Se ejecuta una sola vez al cargar la aplicación
@@ -130,15 +107,12 @@ const GameState = {
     init() {
         console.log('[GameState] Inicializando estado...');
         
-        // Limpiar datos de sesión
         sessionStorage.clear();
         
         // Verificar si hay sesión guardada en localStorage
         if (this.playerId && this.sessionId) {
             console.log('[GameState] ✓ Sesión guardada encontrada');
-            // No limpiar localStorage!
         } else {
-            // Nueva sesión
             localStorage.clear();
         }
         
@@ -255,7 +229,6 @@ const GameState = {
             selectedShip.orientation = 
                 selectedShip.orientation === 'HORIZONTAL' ? 'VERTICAL' : 'HORIZONTAL';
             
-            // Actualizar también la orientación global para el siguiente barco
             this.placement.orientation = selectedShip.orientation;
         }
     },
@@ -270,7 +243,7 @@ const GameState = {
             this.placement.placedShips.push({
                 ...ship,
                 positions: positions,
-                orientation: ship.orientation  // Usar la orientación del barco, no la global
+                orientation: ship.orientation
             });
         }
     },
@@ -375,7 +348,6 @@ const GameState = {
     }
 };
 
-// Exportar para uso en otros módulos
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = GameState;
 }

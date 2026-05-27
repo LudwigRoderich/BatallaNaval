@@ -53,7 +53,7 @@ async def health_check():
         "message": "Servidor de Batalla Naval activo"
     }
 
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Sube dos directorios
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 static_dir = os.path.join(base_dir, 'client')
 
 if os.path.exists(static_dir) and os.path.isdir(static_dir):

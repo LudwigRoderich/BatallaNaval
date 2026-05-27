@@ -527,18 +527,4 @@ Ingresa diferentes nombres para jugar contra ti mismo.
     "attacked_coordinate": "D6"
 }
 ```
-
-## Licencia
-
-Este proyecto es de código abierto. Siéntete libre de usar, modificar y distribuir.
-
-## Autor
-
-Proyecto de Batalla Naval - Implementación educativa de arquitectura cliente-servidor con WebSockets.
-
----
-
-**¿Problemas o sugerencias?** Abre un issue en el repositorio o contacta al autor.
-
-**Versión:** 1.0  
 **Última actualización:** Mayo 2026

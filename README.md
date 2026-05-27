@@ -2,6 +2,8 @@
 
 Un juego de estrategia clásico **Batalla Naval** implementado con arquitectura cliente-servidor en tiempo real. Los jugadores se enfrentan en partidas uno contra uno, colocando sus flotas en tableros secretos y atacándose mutuamente hasta hundir todos los barcos del oponente.
 
+![Pantalla Principal](assets/capturas%20de%20pantalla/main.png)
+
 ## Características del Juego
 
 - **Juego Multijugador en Tiempo Real**: Comunicación bidireccional instantánea mediante WebSockets
@@ -232,15 +234,27 @@ INFO:     WebSocket server running on ws://127.0.0.1:8080
 - Haz clic en **CONFIRMAR DISPOSICIÓN** cuando esté listo
 - Espera a que el oponente termine de colocar sus barcos
 
+![Colocación de Barcos](assets/capturas%20de%20pantalla/placing%20ships.png)
+
 #### Fase 3: Combate
 - Tu tablero (izquierda): Muestra tus barcos y ataques recibidos
 - Tablero del oponente (derecha): Tablero de ataque donde registras tus ataques
 - Los ataques que aciertan (HIT) o hunden barcos (SUNK) te dan otro turno
 - Los ataques que fallan (MISS) cambian al turno del oponente
 
+![Combate - En Progreso 1](assets/capturas%20de%20pantalla/in%20progress%201.png)
+
+![Combate - En Progreso 2](assets/capturas%20de%20pantalla/in%20progress%202.png)
+
+![Combate - En Progreso 3](assets/capturas%20de%20pantalla/in%20progress%203.png)
+
 #### Fase 4: Resultado Final
 - El juego termina cuando todos los barcos de un jugador están hundidos
 - Se muestra el ganador y estadísticas de la partida
+
+![Victoria](assets/capturas%20de%20pantalla/win.png)
+
+![Derrota](assets/capturas%20de%20pantalla/lose.png)
 
 ### Controles
 
@@ -514,3 +528,17 @@ Ingresa diferentes nombres para jugar contra ti mismo.
 }
 ```
 
+## Licencia
+
+Este proyecto es de código abierto. Siéntete libre de usar, modificar y distribuir.
+
+## Autor
+
+Proyecto de Batalla Naval - Implementación educativa de arquitectura cliente-servidor con WebSockets.
+
+---
+
+**¿Problemas o sugerencias?** Abre un issue en el repositorio o contacta al autor.
+
+**Versión:** 1.0  
+**Última actualización:** Mayo 2026

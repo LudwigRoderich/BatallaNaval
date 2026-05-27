@@ -1,8 +1,8 @@
-# ⚓ Batalla Naval - Juego Multijugador en Tiempo Real
+# Batalla Naval - Juego Multijugador en Tiempo Real
 
 Un juego de estrategia clásico **Batalla Naval** implementado con arquitectura cliente-servidor en tiempo real. Los jugadores se enfrentan en partidas uno contra uno, colocando sus flotas en tableros secretos y atacándose mutuamente hasta hundir todos los barcos del oponente.
 
-## 🎮 Características del Juego
+## Características del Juego
 
 - **Juego Multijugador en Tiempo Real**: Comunicación bidireccional instantánea mediante WebSockets
 - **Interfaz Moderna y Reactiva**: Diseño temático "sonar radar" con animaciones y efectos visuales
@@ -15,7 +15,7 @@ Un juego de estrategia clásico **Batalla Naval** implementado con arquitectura 
 - **Persistencia de Sesión**: Guardado de datos del jugador en `localStorage`
 - **Flota Estándar**: Portaaviones (5), Acorazado (4), Crucero (3), Destructor (3), Submarino (2)
 
-## 🏗️ Arquitectura Técnica
+## Arquitectura Técnica
 
 ### Diagrama de Capas
 
@@ -119,27 +119,27 @@ FINISHED
 
 El servidor implementa validaciones robustas:
 
-✅ **Colocación de Barcos:**
+**Colocación de Barcos:**
 - Coordenadas dentro del tablero (0-9, 0-9)
 - Sin solapamiento con otros barcos
 - Alineación correcta (horizontal o vertical)
 - Un barco de cada tipo por jugador
 - Longitud correcta según tipo
 
-✅ **Ataques:**
+**Ataques:**
 - Coordenada válida dentro del tablero
 - No atacar la misma coordenada dos veces
 - Validar turnos correctos
 - Detección automática de barcos hundidos
 
-✅ **Sesiones:**
+**Sesiones:**
 - Timeout de espera de oponente: 120s
 - Timeout de colocación de barcos: 180s
 - Timeout de turno: 300s
 - Timeout de reconexión: 60s
 - Timeout de inactividad: 3600s
 
-## 📦 Instalación
+## Instalación
 
 ### Requisitos Previos
 
@@ -195,7 +195,7 @@ HTTP_PORT=8000
 CORS_ORIGINS=*
 ```
 
-## 🚀 Uso
+## Uso
 
 ### Iniciar el Servidor
 
@@ -255,7 +255,7 @@ INFO:     WebSocket server running on ws://127.0.0.1:8080
   - El indicador de turno muestra el estado actual
   - Los impactos (HIT), hundimientos (SUNK) y fallos (MISS) se visualizan
 
-## 📁 Estructura del Proyecto
+## Estructura del Proyecto
 
 ```
 BatallaNaval/
@@ -360,14 +360,14 @@ BatallaNaval/
 - Cambiar pantallas según estado del juego
 - Efectos visuales y animaciones
 
-## 🎨 Diseño Visual
+## Diseño Visual
 
 - **Paleta de Colores**: Tema oceánico azul profundo con acentos aqua y rojo
 - **Tipografía**: "Orbitron" para títulos (efecto militar), "Rajdhani" para cuerpo
 - **Efectos**: Glow neon, animaciones suaves, tema "radar sonar"
 - **Responsividad**: Diseño adaptable a diferentes tamaños de pantalla
 
-## 🔄 Flujo de Comunicación
+## Flujo de Comunicación
 
 ### Inicialización
 ```
@@ -420,7 +420,7 @@ BatallaNaval/
 6. Juego continúa desde donde se interrumpió
 ```
 
-## ⚙️ Configuración Avanzada
+## Configuración Avanzada
 
 ### Timeouts (en config.py)
 
@@ -447,7 +447,7 @@ MAX_PLAYER_NAME_LENGTH = 30
 BOARD_SIZE = 10  # Tablero 10x10 (coordenadas 0-9)
 ```
 
-## 🐛 Solución de Problemas
+## Solución de Problemas
 
 ### "No se puede conectar al servidor"
 - Verifica que el servidor esté ejecutándose: `python main.py`
@@ -469,7 +469,7 @@ BOARD_SIZE = 10  # Tablero 10x10 (coordenadas 0-9)
 - Asegúrate de que los barcos están alineados (horizontal o vertical)
 - Verifica que tengas exactamente 5 barcos de los tipos requeridos
 
-## 🚀 Desarrollo
+## Desarrollo
 
 ### Modo Debug
 
@@ -514,17 +514,3 @@ Ingresa diferentes nombres para jugar contra ti mismo.
 }
 ```
 
-## 📝 Licencia
-
-Este proyecto es de código abierto. Siéntete libre de usar, modificar y distribuir.
-
-## 👨‍💻 Autor
-
-Proyecto de Batalla Naval - Implementación educativa de arquitectura cliente-servidor con WebSockets.
-
----
-
-**¿Problemas o sugerencias?** Abre un issue en el repositorio o contacta al autor.
-
-**Versión:** 1.0  
-**Última actualización:** Mayo 2026
